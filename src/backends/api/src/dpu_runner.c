@@ -182,7 +182,6 @@ dpu_poll_rank(struct dpu_rank_t *rank)
     dpu_slice_id_t slice_id_profiling = dpu_get_slice_id(rank->profiling_context.dpu);
     dpu_member_id_t dpu_id_profiling = dpu_get_member_id(rank->profiling_context.dpu);
     uint8_t nr_threads = rank->description->hw.dpu.nr_of_threads;
-    uint32_t profiled_address[nr_threads];
     dpu_bitfield_t dpu_poll_running[DPU_MAX_NR_CIS];
     dpu_bitfield_t dpu_poll_in_fault[DPU_MAX_NR_CIS];
     dpu_run_context_t run_context = dpu_get_run_context(rank);
@@ -195,6 +194,7 @@ dpu_poll_rank(struct dpu_rank_t *rank)
         default:
             break;
         case DPU_PROFILING_STATS: {
+            uint32_t profiled_address[nr_threads];
             memset(profiled_address, 0, nr_threads * sizeof(uint32_t));
 
             struct dpu_t *dpu = DPU_GET_UNSAFE(rank, slice_id_profiling, dpu_id_profiling);

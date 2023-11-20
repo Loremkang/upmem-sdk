@@ -124,6 +124,16 @@ dpu_error_to_string_switch(dpu_error_t status)
             return "invalid buffer size";
         case DPU_ERR_NONBLOCKING_SYNC_CALLBACK:
             return "nonblocking and synchronous callback is invalid";
+        case DPU_ERR_TOO_MANY_TASKLETS:
+            return "dpu program uses more tasklets than the hardware has threads";
+        case DPU_ERR_SG_TOO_MANY_BLOCKS:
+            return "scatter/gather transfer prepare exceed max number of blocks";
+        case DPU_ERR_SG_LENGTH_MISMATCH:
+            return "scatter/gather transfer mismatch between nr bytes in blocks and length";
+        case DPU_ERR_SG_NOT_ACTIVATED:
+            return "scatter/gather transfer not activated";
+        case DPU_ERR_SG_NOT_MRAM_SYMBOL:
+            return "scatter/gather transfer unsupported symbol (must be a mram symbol)";
         case DPU_ERR_ASYNC_JOBS:
             return "asynchronous operation error";
         default:

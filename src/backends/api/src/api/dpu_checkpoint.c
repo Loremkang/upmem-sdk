@@ -34,7 +34,7 @@ dpu_checkpoint_save(struct dpu_set_t set, dpu_checkpoint_flags_t flags, struct d
             }
 
             if (flags_contain(flags, DPU_CHECKPOINT_INTERNAL)) {
-                if ((status = dpu_initialize_fault_process_for_dpu(set.dpu, context)) != DPU_OK) {
+                if ((status = dpu_initialize_fault_process_for_dpu(set.dpu, context, (mram_addr_t)0 /*nullptr*/)) != DPU_OK) {
                     goto end;
                 }
 

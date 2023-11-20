@@ -39,6 +39,7 @@
 #include "dpu_module_compatibility.h"
 
 #include "static_verbose.h"
+#include <assert.h>
 
 const char *
 get_rank_path(dpu_description_t description);
@@ -65,6 +66,7 @@ struct dpu_region_address_translation *backend_translate[] = {
 #endif
     0, /* fpga_kc705 has no user backend */
     &fpga_aws_translate,
+    0, /*fpga_ku250u2 has no user backend */
 #ifdef __powerpc64__
     &power9_translate,
 #else
@@ -129,7 +131,6 @@ typedef struct _fpga_allocation_parameters_t {
 typedef struct _hw_dpu_rank_allocation_parameters_t {
     struct dpu_rank_fs rank_fs;
     struct dpu_region_address_translation translate;
-    struct dpu_region_interleaving interleave;
     uint64_t region_size;
     uint8_t mode, dpu_chip_id, backend_id;
     uint8_t channel_id;
@@ -163,6 +164,12 @@ fill_description_with_default_values_for(dpu_chip_id_e chip_id, dpu_description_
         case vD_fpga1:
         case vD_fpga4:
         case vD_fpga8:
+        case vD_asic1_v1_4:
+        case vD_asic4_v1_4:
+        case vD_asic8_v1_4:
+        case vD_fpga1_v1_4:
+        case vD_fpga4_v1_4:
+        case vD_fpga8_v1_4:
         case vD:
             break;
     }
@@ -178,20 +185,24 @@ fill_description_with_default_values_for(dpu_chip_id_e chip_id, dpu_description_
     return true;
 }
 
-static bool
-fill_dpu_region_interleaving_values(dpu_description_t description)
+static inline bool
+is_chip_emulated(dpu_chip_id_e chip_id)
 {
-    hw_dpu_rank_allocation_parameters_t params = _this_params(description);
-
-    params->interleave.mram_size = description->hw.memories.mram_size;
-    params->interleave.nb_dpus_per_ci = description->hw.topology.nr_of_dpus_per_control_interface;
-    params->interleave.nb_ci = description->hw.topology.nr_of_control_interfaces;
-
-    return true;
+    switch (chip_id) {
+        default:
+            return false;
+        case vD_fpga1:
+        case vD_fpga4:
+        case vD_fpga8:
+        case vD_fpga1_v1_4:
+        case vD_fpga4_v1_4:
+        case vD_fpga8_v1_4:
+            return true;
+    }
 }
 
 static bool
-fill_address_translation_backend(hw_dpu_rank_allocation_parameters_t params)
+fill_address_translation_backend(hw_dpu_rank_allocation_parameters_t params, dpu_description_t description)
 {
     params->backend_id = dpu_sysfs_get_backend_id(&params->rank_fs);
     if (params->backend_id >= DPU_BACKEND_NUMBER)
@@ -204,7 +215,7 @@ fill_address_translation_backend(hw_dpu_rank_allocation_parameters_t params)
     struct dpu_transfer_thread_configuration xfer_thread_conf = params->translate.xfer_thread_conf;
     memcpy(&params->translate, backend_translate[params->backend_id], sizeof(struct dpu_region_address_translation));
     params->translate.xfer_thread_conf = xfer_thread_conf;
-    params->translate.interleave = &params->interleave;
+    params->translate.desc = &description->hw;
     params->translate.one_read = false;
 
     return true;
@@ -246,15 +257,14 @@ add_faulty_memory_address(struct dpu_memory_repair_t *repair_info, uint16_t addr
 static dpu_error_t
 fill_sram_repairs_and_update_enabled_dpus(struct dpu_rank_t *rank)
 {
-    int status;
-
+    hw_dpu_rank_allocation_parameters_t params = _this_params(rank->description);
     const char *rank_path = get_rank_path(rank->description);
     char vpd_path[512];
-    int rank_index;
+    uint8_t rank_index;
     struct dpu_vpd vpd;
 
-    status = dpu_sysfs_get_rank_index(rank_path, &rank_index);
-    if (status != 0) {
+    rank_index = dpu_sysfs_get_rank_index(&params->rank_fs);
+    if (rank_index == DPU_INVALID_RANK_INDEX) {
         LOG_RANK(DEBUG, rank, "unable to get rank index");
         return DPU_ERR_SYSTEM;
     }
@@ -276,13 +286,13 @@ fill_sram_repairs_and_update_enabled_dpus(struct dpu_rank_t *rank)
     uint8_t nr_dpus = rank->description->hw.topology.nr_of_dpus_per_control_interface;
 
     uint64_t disabled_mask = 0;
-    uint16_t repair_cnt = 0;
 
     bool repair_requested
         = (rank->description->configuration.do_iram_repair) || (rank->description->configuration.do_wram_repair);
 
     if (repair_requested) {
         int i;
+        uint16_t repair_cnt = 0;
 
         for (i = 0; i < vpd.vpd_header.repair_count; ++i) {
             repair_cnt++;
@@ -480,15 +490,8 @@ hw_allocate(struct dpu_rank_t *rank, dpu_description_t description)
         }
 
     } else if (params->mode == DPU_REGION_MODE_PERF || params->mode == DPU_REGION_MODE_HYBRID) {
-        /* 4/ Retrieve interleaving infos */
-        if (!fill_dpu_region_interleaving_values(description)) {
-            LOG_RANK(WARNING, rank, "Failed to retrieve interleaving info");
-            status = DPU_RANK_SYSTEM_ERROR;
-            goto free_rank_context;
-        }
-
-        /* 5/ Initialize CPU backend for this rank */
-        ret = fill_address_translation_backend(params);
+        /* 4/ Initialize CPU backend for this rank */
+        ret = fill_address_translation_backend(params, description);
         if (!ret) {
             LOG_RANK(WARNING, rank, "Failed to retrieve backend");
             status = DPU_RANK_SYSTEM_ERROR;
@@ -522,7 +525,7 @@ hw_allocate(struct dpu_rank_t *rank, dpu_description_t description)
         }
 
         if (params->mode == DPU_REGION_MODE_PERF) {
-            /* 6/ Mmap the whole physical region */
+            /* 5/ Mmap the whole physical region */
             params->region_size = dpu_sysfs_get_region_size(&params->rank_fs);
 
             /* mmap does not guarantee (at all) that the address will be aligned on hugepage size (1GB) but the driver does. */
@@ -537,9 +540,9 @@ hw_allocate(struct dpu_rank_t *rank, dpu_description_t description)
         }
     }
 
-    /* 7/ Inform DPUs about their SRAM defects, and update CIs runtime configuration */
+    /* 6/ Inform DPUs about their SRAM defects, and update CIs runtime configuration */
     /* Do not check SRAM defects in case of FPGA */
-    if ((params->dpu_chip_id != vD_fpga1) && (params->dpu_chip_id != vD_fpga8) && (params->dpu_chip_id != vD_fpga4)) {
+    if (is_chip_emulated(params->dpu_chip_id) == false) {
         if (!description->configuration.ignore_vpd) {
             dpu_error_t repair_status = fill_sram_repairs_and_update_enabled_dpus(rank);
             if (repair_status != DPU_OK) {
@@ -691,12 +694,35 @@ hw_update_commands(struct dpu_rank_t *rank, dpu_rank_buffer_t buffer)
     return DPU_RANK_SUCCESS;
 }
 
+static inline bool
+is_transfer_matrix_supported_by_region_mode(struct dpu_transfer_matrix *transfer_matrix, uint8_t region_mode)
+{
+    if (transfer_matrix->type == DPU_SG_XFER_MATRIX) {
+        switch (region_mode) {
+            case DPU_REGION_MODE_PERF:
+                break;
+            case DPU_REGION_MODE_HYBRID:
+            case DPU_REGION_MODE_SAFE:
+                return false;
+            default:
+                assert(false && "invalid region mode");
+        }
+    }
+    return true;
+}
+
 static dpu_rank_status_e
 hw_copy_to_rank(struct dpu_rank_t *rank, struct dpu_transfer_matrix *transfer_matrix)
 {
     hw_dpu_rank_allocation_parameters_t params = _this_params(rank->description);
     struct dpu_transfer_matrix *ptr_transfer_matrix = transfer_matrix;
     int ret;
+
+    /* check if transfer matrix type is supported for this region mode */
+    if (!is_transfer_matrix_supported_by_region_mode(transfer_matrix, params->mode)) {
+        LOG_RANK(WARNING, rank, "Unsupported transfer_matrix type %u for regionMode=%u", transfer_matrix->type, params->mode);
+        return DPU_RANK_SYSTEM_ERROR;
+    }
 
     switch (params->mode) {
         case DPU_REGION_MODE_PERF:
@@ -731,6 +757,12 @@ hw_copy_from_rank(struct dpu_rank_t *rank, struct dpu_transfer_matrix *transfer_
     hw_dpu_rank_allocation_parameters_t params = _this_params(rank->description);
     struct dpu_transfer_matrix *ptr_transfer_matrix = transfer_matrix;
     int ret;
+
+    /* check if transfer matrix type is supported for this region mode */
+    if (!is_transfer_matrix_supported_by_region_mode(transfer_matrix, params->mode)) {
+        LOG_RANK(WARNING, rank, "Unsupported transfer_matrix type %u for regionMode=%u", transfer_matrix->type, params->mode);
+        return DPU_RANK_SYSTEM_ERROR;
+    }
 
     switch (params->mode) {
         case DPU_REGION_MODE_PERF:
@@ -982,6 +1014,12 @@ hw_custom_operation(struct dpu_rank_t *rank,
             }
 
             break;
+        case DPU_COMMAND_SET_SLICE_INFO:
+            if (ioctl(params->rank_fs.fd_rank, DPU_RANK_IOCTL_SLICE_INFO, rank->runtime.control_interface.slice_info) != 0) {
+                LOG_RANK(WARNING, rank, "Failed to provide driver with slice information (%s)", strerror(errno));
+                status = DPU_RANK_SYSTEM_ERROR;
+                break;
+            }
         default:
             break;
     }

@@ -45,6 +45,14 @@ namespace dpu {
  */
 const unsigned ALLOCATE_ALL = DPU_ALLOCATE_ALL;
 
+template <class F>
+static bool
+__get_block(struct sg_block_info *out, uint32_t dpu_index, uint32_t block_index, void *args)
+{
+    auto f = static_cast<F *>(args);
+    return (*f)(out, dpu_index, block_index);
+}
+
 /**
  * @brief Exception thrown by the methods of this module.
  */
@@ -69,7 +77,7 @@ private:
     dpu_error_t errorId;
     const char *msg;
 
-    DpuError(dpu_error_t ErrorId)
+    explicit DpuError(dpu_error_t ErrorId)
         : errorId(ErrorId)
     {
         msg = dpu_error_to_string(errorId);
@@ -99,7 +107,10 @@ public:
      * @param Address address of the DPU symbol
      * @param Size size of the DPU symbol (in bytes)
      */
-    DpuSymbol(unsigned Address, unsigned Size) { cSymbol = { .address = Address, .size = Size }; }
+    DpuSymbol(unsigned Address, unsigned Size)
+        : cSymbol({ .address = Address, .size = Size })
+    {
+    }
 
 private:
     DpuSymbol() { }
@@ -128,7 +139,7 @@ public:
     }
 
 private:
-    struct dpu_program_t *cProgram;
+    struct dpu_program_t *cProgram { nullptr };
 };
 
 class DpuSet;
@@ -337,6 +348,75 @@ public:
     }
 
     /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the name of the destination DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param get_block_info the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    void
+    copyScatterGather(const std::string &DstSymbol,
+        unsigned Offset,
+        get_block_t &get_block_info,
+        unsigned Size,
+        bool length_check = true)
+    {
+        dpu_sg_xfer_flags_t flags = async ? DPU_SG_XFER_ASYNC : DPU_SG_XFER_DEFAULT;
+        if (!length_check) {
+            flags = static_cast<dpu_sg_xfer_flags_t>(flags | DPU_SG_XFER_DISABLE_LENGTH_CHECK);
+        }
+        DpuError::throwOnErr(dpu_push_sg_xfer(cSet, DPU_XFER_TO_DPU, DstSymbol.c_str(), Offset, Size, &get_block_info, flags));
+    }
+
+    /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the name of the destination DPU symbol
+     * @param get_block_info the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffer
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    void
+    copyScatterGather(const std::string &DstSymbol, get_block_t &get_block_info, unsigned Size, bool length_check = true)
+    {
+        copyScatterGather(DstSymbol, 0, get_block_info, Size, length_check);
+    }
+
+    /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the name of the destination DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param f the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    template <class F>
+    void
+    copyScatterGather(const std::string &DstSymbol, unsigned Offset, F f, unsigned Size, bool length_check = true)
+    {
+        get_block_t get_block_info { __get_block<F>, &f, sizeof(f) };
+        copyScatterGather(DstSymbol, Offset, get_block_info, Size, length_check);
+    }
+
+    /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the name of the destination DPU symbol
+     * @param f the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    template <class F>
+    void
+    copyScatterGather(const std::string &DstSymbol, F f, unsigned Size, bool length_check = true)
+    {
+        copyScatterGather(DstSymbol, 0, f, Size, length_check);
+    }
+
+    /**
      * @brief Copy the different buffers to the DPUs in the set.
      * @param DstSymbol the destination DPU symbol
      * @param Offset offset from the start of the symbol where to start the copy
@@ -409,6 +489,68 @@ public:
     copy(DpuSymbol &DstSymbol, const std::vector<std::vector<T>> &SrcBuffers)
     {
         copy(DstSymbol, 0, SrcBuffers);
+    }
+
+    /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the destination DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param get_block_info the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffers
+     */
+    void
+    copyScatterGather(DpuSymbol &DstSymbol, unsigned Offset, get_block_t &get_block_info, unsigned Size, bool length_check = true)
+    {
+        dpu_sg_xfer_flags_t flags = async ? DPU_SG_XFER_ASYNC : DPU_SG_XFER_DEFAULT;
+        if (!length_check) {
+            flags = static_cast<dpu_sg_xfer_flags_t>(flags | DPU_SG_XFER_DISABLE_LENGTH_CHECK);
+        }
+        DpuError::throwOnErr(
+            dpu_push_sg_xfer_symbol(cSet, DPU_XFER_TO_DPU, DstSymbol.cSymbol, Offset, Size, &get_block_info, flags));
+    }
+
+    /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the name of the destination DPU symbol
+     * @param get_block_info the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffer
+     */
+    void
+    copyScatterGather(DpuSymbol &DstSymbol, get_block_t &get_block_info, unsigned Size, bool length_check = true)
+    {
+        copyScatterGather(DstSymbol, 0, get_block_info, Size, length_check);
+    }
+
+    /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the destination DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param f the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffers
+     */
+    template <class F>
+    void
+    copyScatterGather(DpuSymbol &DstSymbol, unsigned Offset, F f, unsigned Size, bool length_check = true)
+    {
+        get_block_t get_block_info { __get_block<F>, &f, sizeof(f) };
+        copyScatterGather(DstSymbol, Offset, get_block_info, Size, length_check);
+    }
+
+    /**
+     * @brief Copy the different buffers to the DPUs in the set with a scatter/gather transfer.
+     * @param DstSymbol the destination DPU symbol
+     * @param f the function to get the block information
+     * @param Size the number of bytes to copy
+     * @param length_check check the length of the buffers
+     */
+    template <class F>
+    void
+    copyScatterGather(DpuSymbol &DstSymbol, F f, unsigned Size, bool length_check = true)
+    {
+        copyScatterGather(DstSymbol, 0, f, Size, length_check);
     }
 
     /**
@@ -487,6 +629,75 @@ public:
     }
 
     /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param get_block_info the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    void
+    copyScatterGather(get_block_t &get_block_info,
+        unsigned Size,
+        const std::string &SrcSymbol,
+        unsigned Offset,
+        bool length_check = true)
+    {
+        dpu_sg_xfer_flags_t flags = async ? DPU_SG_XFER_ASYNC : DPU_SG_XFER_DEFAULT;
+        if (!length_check) {
+            flags = static_cast<dpu_sg_xfer_flags_t>(flags | DPU_SG_XFER_DISABLE_LENGTH_CHECK);
+        }
+        DpuError::throwOnErr(dpu_push_sg_xfer(cSet, DPU_XFER_FROM_DPU, SrcSymbol.c_str(), Offset, Size, &get_block_info, flags));
+    }
+
+    /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param get_block_info the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    void
+    copyScatterGather(get_block_t &get_block_info, unsigned Size, const std::string &SrcSymbol, bool length_check = true)
+    {
+        copyScatterGather(get_block_info, Size, SrcSymbol, 0, length_check);
+    }
+
+    /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param f the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    template <class F>
+    void
+    copyScatterGather(F f, unsigned Size, const std::string &SrcSymbol, unsigned Offset, bool length_check = true)
+    {
+        get_block_t get_block_info { __get_block<F>, &f, sizeof(f) };
+        copyScatterGather(get_block_info, Size, SrcSymbol, Offset, length_check);
+    }
+
+    /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param f the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    template <class F>
+    void
+    copyScatterGather(F f, unsigned Size, const std::string &SrcSymbol, bool length_check = true)
+    {
+        copyScatterGather(f, Size, SrcSymbol, 0, length_check);
+    }
+
+    /**
      * @brief Copy data from the DPUs in the set.
      * @param DstBuffers the destination host buffers (one per DPU in the set)
      * @param Size the number of bytes to copy
@@ -562,6 +773,72 @@ public:
     }
 
     /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param get_block_info the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    void
+    copyScatterGather(get_block_t &get_block_info, unsigned Size, DpuSymbol &SrcSymbol, unsigned Offset, bool length_check = true)
+    {
+        dpu_sg_xfer_flags_t flags = async ? DPU_SG_XFER_ASYNC : DPU_SG_XFER_DEFAULT;
+        if (!length_check) {
+            flags = static_cast<dpu_sg_xfer_flags_t>(flags | DPU_SG_XFER_DISABLE_LENGTH_CHECK);
+        }
+        DpuError::throwOnErr(
+            dpu_push_sg_xfer_symbol(cSet, DPU_XFER_FROM_DPU, SrcSymbol.cSymbol, Offset, Size, &get_block_info, flags));
+    }
+
+    /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param get_block_info the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    void
+    copyScatterGather(get_block_t &get_block_info, unsigned Size, DpuSymbol &SrcSymbol, bool length_check = true)
+    {
+        copyScatterGather(get_block_info, Size, SrcSymbol, 0, length_check);
+    }
+
+    /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param f the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param Offset offset from the start of the symbol where to start the copy
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    template <class F>
+    void
+    copyScatterGather(F f, unsigned Size, DpuSymbol &SrcSymbol, unsigned Offset, bool length_check = true)
+    {
+        get_block_t get_block_info { __get_block<F>, &f, sizeof(f) };
+        copyScatterGather(get_block_info, Size, SrcSymbol, Offset, length_check);
+    }
+
+    /**
+     * @brief Copy data from the DPUs in the set with a scatter-gather transfer.
+     * @param f the callback function to get the destination buffers
+     * @param Size the number of bytes to copy
+     * @param SrcSymbol the name of the source DPU symbol
+     * @param length_check check the length of the buffers
+     * @throws DpuError when the symbol is not big enough for the data
+     */
+    template <class F>
+    void
+    copyScatterGather(F f, unsigned Size, DpuSymbol &SrcSymbol, bool length_check = true)
+    {
+        copyScatterGather(f, Size, SrcSymbol, 0, length_check);
+    }
+
+    /**
      * @brief Execute a DPU program.
      * @pre The DPU program must be previously loaded with DpuSet::load.
      * @throws DpuError when the DPU execution triggers a fault.
@@ -577,7 +854,7 @@ private:
     struct dpu_set_t cSet;
     bool async;
 
-    DpuSetOps(struct dpu_set_t CSet, bool Async)
+    DpuSetOps(const struct dpu_set_t &CSet, bool Async)
         : cSet(CSet)
         , async(Async)
     {
@@ -729,6 +1006,7 @@ private:
         va_list ap;
         va_start(ap, Fmt);
         if (vasprintf(&str, Fmt, ap) == -1) {
+            va_end(ap);
             return DPU_ERR_SYSTEM;
         }
 
@@ -804,7 +1082,7 @@ public:
 private:
     DpuSet *set;
 
-    DpuSetAsync(DpuSet *Set)
+    explicit DpuSetAsync(DpuSet *Set)
         : DpuSetOps(Set->cSet, true)
         , set(Set)
     {
@@ -813,9 +1091,9 @@ private:
     static dpu_error_t
     cbWrapper(struct dpu_set_t CSet, unsigned Idx, void *Arg)
     {
-        DpuSet set(CSet, false, true);
-        CallContext *context = (CallContext *)Arg;
-        context->callback(set, Idx);
+        DpuSet dpuSet(CSet, false, true);
+        CallContext *context = static_cast<CallContext *>(Arg);
+        context->callback(dpuSet, Idx);
         if (--context->count == 0) {
             delete context;
         }
@@ -823,7 +1101,7 @@ private:
     }
 };
 
-DpuSetAsync
+inline DpuSetAsync
 DpuSet::async()
 {
     return DpuSetAsync(this);

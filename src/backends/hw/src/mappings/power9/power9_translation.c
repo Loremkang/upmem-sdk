@@ -21,10 +21,6 @@
 
 #define CIID 5
 
-#define for_each_dpu_in_rank(idx, ci, dpu, nb_cis, nb_dpus_per_ci)                                                               \
-    for (dpu = 0, idx = 0; dpu < nb_dpus_per_ci; ++dpu)                                                                          \
-        for (ci = 0; ci < nb_cis; ++ci, ++idx)
-
 void
 byte_interleave(uint64_t *input, uint64_t *output)
 {
@@ -117,7 +113,7 @@ power9_write_to_cis(__attribute__((unused)) struct dpu_region_address_translatio
     int i;
     uint8_t nb_cis;
 
-    nb_cis = tr->interleave->nb_ci;
+    nb_cis = tr->desc->topology.nr_of_control_interfaces;
 
     /* 0/ Find out CI address */
     ci_address = base_region_addr + 0x80; // + 0x4000;
@@ -207,8 +203,8 @@ power9_write_to_rank(struct dpu_region_address_translation *tr,
     uint64_t cache_line[16], cache_line_interleave[16];
     uint8_t idx, ci_id, dpu_id, nb_cis, nb_dpus_per_ci;
 
-    nb_cis = tr->interleave->nb_ci;
-    nb_dpus_per_ci = tr->interleave->nb_dpus_per_ci;
+    nb_cis = tr->desc->topology.nr_of_control_interfaces;
+    nb_dpus_per_ci = tr->desc->topology.nr_of_dpus_per_control_interface;
 
     /* Works only for transfers of same size and same offset on the
      * same line
@@ -223,7 +219,7 @@ power9_write_to_rank(struct dpu_region_address_translation *tr,
         ptr_dest += bank_start;
 
         for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
-            if (xfer_matrix[idx + ci_id].ptr) {
+            if (xfer_matrix->ptr[idx + ci_id]) {
                 size_transfer = xfer_matrix[idx + ci_id].size;
                 offset = xfer_matrix[idx + ci_id].offset;
                 break;
@@ -238,7 +234,7 @@ power9_write_to_rank(struct dpu_region_address_translation *tr,
             uint64_t offset = (next_data % BANK_CHUNK_SIZE) + (next_data / BANK_CHUNK_SIZE) * BANK_NEXT_CHUNK_OFFSET;
 
             for (ci_id = 0; ci_id < nb_cis * 2; ++ci_id) {
-                if (xfer_matrix[idx + ci_id % nb_cis].ptr)
+                if (xfer_matrix->ptr[idx + ci_id % nb_cis])
                     cache_line[ci_id] = *((uint64_t *)xfer_matrix[idx + ci_id % nb_cis].ptr + i + ci_id / nb_cis);
             }
 
@@ -280,8 +276,8 @@ power9_read_from_rank(struct dpu_region_address_translation *tr,
     uint64_t cache_line[16], cache_line_interleave[16];
     uint8_t idx, ci_id, dpu_id, nb_cis, nb_dpus_per_ci;
 
-    nb_cis = tr->interleave->nb_ci;
-    nb_dpus_per_ci = tr->interleave->nb_dpus_per_ci;
+    nb_cis = tr->desc->topology.nr_of_control_interfaces;
+    nb_dpus_per_ci = tr->desc->topology.nr_of_dpus_per_control_interface;
 
     /* Works only for transfers of same size and same offset on the
      * same line
@@ -296,7 +292,7 @@ power9_read_from_rank(struct dpu_region_address_translation *tr,
         ptr_dest += bank_start;
 
         for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
-            if (xfer_matrix[idx + ci_id].ptr) {
+            if (xfer_matrix->ptr[idx + ci_id]) {
                 size_transfer = xfer_matrix[idx + ci_id].size;
                 offset = xfer_matrix[idx + ci_id].offset;
                 break;
@@ -335,7 +331,7 @@ power9_read_from_rank(struct dpu_region_address_translation *tr,
             byte_interleave(&cache_line[8], &cache_line_interleave[8]);
 
             for (ci_id = 0; ci_id < 2 * nb_cis; ++ci_id) {
-                if (xfer_matrix[idx + ci_id % nb_cis].ptr) {
+                if (xfer_matrix->ptr[idx + ci_id % nb_cis]) {
                     *((uint64_t *)xfer_matrix[idx + ci_id % nb_cis].ptr + i + ci_id / nb_cis) = cache_line_interleave[ci_id];
                 }
             }
@@ -345,14 +341,7 @@ power9_read_from_rank(struct dpu_region_address_translation *tr,
     __asm__ __volatile__("isync; sync; eieio;" : : : "memory");
 }
 
-struct dpu_region_interleaving power9_interleave = {
-    .nb_ci = 8,
-    .nb_dpus_per_ci = 8,
-    .mram_size = 64 * 1024 * 1024,
-};
-
 struct dpu_region_address_translation power9_translate = {
-    .interleave = &power9_interleave,
     .backend_id = DPU_BACKEND_POWER9,
     .capabilities = CAP_PERF | CAP_SAFE,
     //.init_rank	        = power9_init_rank,

@@ -100,8 +100,7 @@ void
 set_pc_in_core_dump_or_restore_registers(dpu_thread_t thread,
     iram_addr_t pc,
     dpuinstruction_t *program,
-    iram_size_t program_size,
-    uint8_t nr_of_threads);
+    iram_size_t program_size);
 
 dpu_clock_division_t
 from_division_factor_to_dpu_enum(uint8_t factor);

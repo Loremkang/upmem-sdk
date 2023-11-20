@@ -615,6 +615,7 @@ java_print_fct(void *arg, const char *fmt, ...)
     va_list ap;
     va_start(ap, fmt);
     if (vasprintf(&str, fmt, ap) == -1) {
+        va_end(ap);
         return DPU_ERR_SYSTEM;
     }
     struct java_print_ctxt_t *ctxt = arg;
@@ -784,7 +785,7 @@ Java_com_upmem_dpu_NativeDpuSet_debugInit(JNIEnv *env, jobject this)
     context->dma_fault = false;
     context->mem_fault = false;
 
-    THROW_ON_ERROR_L(dpu_initialize_fault_process_for_dpu(set.dpu, context), error);
+    THROW_ON_ERROR_L(dpu_initialize_fault_process_for_dpu(set.dpu, context, (mram_addr_t)0 /*nullptr*/), error);
 
     jlong contextPtr = (jlong)context;
     jboolean bkpFault = (jboolean)context->bkp_fault;

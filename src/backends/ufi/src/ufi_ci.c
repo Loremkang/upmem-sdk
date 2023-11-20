@@ -315,12 +315,14 @@ static u32 exec_cmd(struct dpu_rank_t *rank, u64 *commands,
 		return DPU_ERR_TIMEOUT;
 	}
 
-	/* All results are ready here, and still present when reading the control interfaces.
-     * We make sure that we have the correct results by reading again (we may have timing issues).
-     * todo(#85): this can be somewhat costly. We should try to integrate this additional read in a lower layer.
-     */
-	if ((status = ci_update_commands(rank, data)) != DPU_OK) {
-		return status;
+	if (!is_chip_v1_4(rank)) {
+		/* All results are ready here, and still present when reading the control interfaces.
+		 * We make sure that we have the correct results by reading again (we may have timing issues).
+		 * todo(#85): this can be somewhat costly. We should try to integrate this additional read in a lower layer.
+		 */
+		if ((status = ci_update_commands(rank, data)) != DPU_OK) {
+			return status;
+		}
 	}
 
 	LOGV_PACKET(rank, data, READ_DIR);
@@ -492,8 +494,6 @@ static bool determine_if_commands_are_finished(struct dpu_rank_t *rank,
 				       nb_bits_set);
 				return false;
 			}
-
-			is_done[each_ci] = true;
 		}
 	}
 

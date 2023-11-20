@@ -16,6 +16,7 @@
 #include <dpu_internals.h>
 #include <dpu_attributes.h>
 #include <dpu_thread_job.h>
+#include <pthread.h>
 
 #define IRAM_MASK (0x80000000u)
 #define MRAM_MASK (0x08000000u)
@@ -405,6 +406,258 @@ dpu_get_transfer_matrix(struct dpu_rank_t *rank)
     } else {
         return &rank->api.matrix;
     }
+}
+
+struct dpu_rank_t *
+dpu_get_as_rank_t(struct dpu_set_t set)
+{
+    return set.list.ranks[0];
+}
+
+static inline void
+reset_sg_buffer_pool(struct dpu_set_t rank, struct sg_xfer_buffer *sg_buffer_pool)
+{
+    struct dpu_set_t dpu;
+    DPU_FOREACH (rank, dpu) {
+        uint32_t dpu_transfer_matrix_index = get_transfer_matrix_index(dpu.dpu->rank, dpu.dpu->slice_id, dpu.dpu->dpu_id);
+        // set the number of block to 0
+        sg_buffer_pool[dpu_transfer_matrix_index].nr_blocks = 0;
+    }
+}
+
+struct sg_xfer_callback_args {
+    /** get_block information */
+    get_block_t *get_block_info;
+    /** direction of the transfer */
+    dpu_xfer_t xfer;
+    /** the DPU symbol address where the transfer starts */
+    dpu_mem_max_addr_t symbol_addr;
+    /** length the number of bytes to copy */
+    size_t length;
+    /** flags options of the transfer */
+    dpu_sg_xfer_flags_t flags;
+    /** reference counter used to free the callback arguments*/
+    uint32_t freeing_refcpt;
+};
+
+static pthread_mutex_t freeing_refcpt_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static inline void
+free_cb_args(struct sg_xfer_callback_args *args)
+{
+    pthread_mutex_lock(&freeing_refcpt_mutex);
+    args->freeing_refcpt--;
+    if (!args->freeing_refcpt) {
+        free(args->get_block_info->args);
+        free(args->get_block_info);
+        free(args);
+    }
+    pthread_mutex_unlock(&freeing_refcpt_mutex);
+}
+__PERF_PROFILING_SYMBOL__ dpu_error_t
+sg_xfer_rank_handler(struct dpu_set_t rank, __attribute((unused)) uint32_t rank_id, void *cb_args)
+{
+    struct dpu_set_t dpu;
+    struct sg_block_info binfo;
+    dpu_error_t status;
+    struct dpu_transfer_matrix transfer_matrix;
+
+    // retreive arguments of the rank
+    struct sg_xfer_callback_args *args = (struct sg_xfer_callback_args *)(cb_args);
+
+    uint32_t dpu_rank_offset = dpu_get_as_rank_t(rank)->dpu_offset;
+    struct sg_xfer_buffer *sg_buffer_pool = dpu_get_as_rank_t(rank)->api.sg_buffer_pool;
+
+    dpu_xfer_t xfer = args->xfer;
+
+    // clearing the transfer matrix before using it
+    dpu_transfer_matrix_clear_all(dpu_get_as_rank_t(rank), &transfer_matrix);
+
+    mram_addr_t mram_byte_offset = args->symbol_addr;
+    UPDATE_MRAM_COPY_PARAMETERS(mram_byte_offset, length);
+
+    transfer_matrix.type = DPU_SG_XFER_MATRIX;
+    transfer_matrix.size = args->length;
+    transfer_matrix.offset = mram_byte_offset;
+
+    uint32_t block_index = 0;
+    uint32_t rank_dpu_index;
+
+    bool check_length = ((args->flags & DPU_SG_XFER_DISABLE_LENGTH_CHECK) == 0);
+
+    if (!dpu_get_as_rank_t(rank)->api.sg_xfer_enabled)
+        return DPU_ERR_SG_NOT_ACTIVATED;
+
+    // add each block of each DPU
+    DPU_FOREACH (rank, dpu, rank_dpu_index) {
+
+        uint32_t dpu_transfer_matrix_index = get_transfer_matrix_index(dpu.dpu->rank, dpu.dpu->slice_id, dpu.dpu->dpu_id);
+        uint32_t dpu_index = rank_dpu_index + dpu_rank_offset;
+        uint32_t dpu_sg_buffer_pool_max_nr_blocks = sg_buffer_pool[dpu_transfer_matrix_index].max_nr_blocks;
+        uint32_t dpu_nr_bytes_to_transfer = 0;
+
+        while (1) {
+
+            // call the get_block function
+            bool block_exists = args->get_block_info->f(&binfo, dpu_index, block_index, args->get_block_info->args);
+
+            if (block_exists) {
+                // the number of blocks exceed the capacity of the sg buffer pool
+                if (block_index >= dpu_sg_buffer_pool_max_nr_blocks)
+                    return DPU_ERR_SG_TOO_MANY_BLOCKS;
+                // if DPU_SG_XFER_DISABLE_LENGTH_CHECK is provided, sending more bytes than "length" is authorized
+                if (binfo.length && (check_length && dpu_nr_bytes_to_transfer >= args->length))
+                    return DPU_ERR_SG_LENGTH_MISMATCH;
+            }
+            // no more block to add for this DPU
+            else {
+                // the precedent block was the last one, so we can check the number of bytes to be send for this DPU
+                // if DPU_SG_XFER_DISABLE_LENGTH_CHECK is not provided, the number of bytes must be equal to length
+                if (check_length && dpu_nr_bytes_to_transfer != args->length)
+                    return DPU_ERR_SG_LENGTH_MISMATCH;
+
+                block_index = 0;
+                break;
+            }
+
+            // add this block if not empty
+            if (binfo.length) {
+                dpu_nr_bytes_to_transfer += binfo.length;
+                switch ((args->xfer)) {
+                    case DPU_XFER_TO_DPU:
+                    case DPU_XFER_FROM_DPU:
+
+                        // if this is the first time we add a new block for this DPU
+                        // initialize the current DPU sg buffer pool pointer
+                        if (transfer_matrix.sg_ptr[dpu_transfer_matrix_index] == NULL)
+                            transfer_matrix.sg_ptr[dpu_transfer_matrix_index] = &sg_buffer_pool[dpu_transfer_matrix_index];
+
+                        // add the new block to the transfer matrix
+                        if ((status = dpu_transfer_matrix_add_dpu_block(dpu.dpu, &transfer_matrix, binfo.addr, binfo.length))
+                            != DPU_OK)
+                            return status;
+                        break;
+                    default:
+                        return DPU_ERR_INVALID_MEMORY_TRANSFER;
+                }
+            }
+
+            block_index++;
+        }
+    }
+
+    // launch the transfer
+    switch (xfer) {
+        case DPU_XFER_TO_DPU:
+            if ((status = dpu_copy_to_mrams(dpu_get_as_rank_t(rank), &transfer_matrix)) != DPU_OK)
+                return status;
+            break;
+        case DPU_XFER_FROM_DPU:
+            if ((status = dpu_copy_from_mrams(dpu_get_as_rank_t(rank), &transfer_matrix)) != DPU_OK)
+                return status;
+            break;
+        default:
+            return DPU_ERR_INVALID_MEMORY_TRANSFER;
+    }
+
+    // reset the scatter gather buffer pool
+    reset_sg_buffer_pool(rank, sg_buffer_pool);
+
+    // freeing the callback arguments
+    free_cb_args(args);
+
+    return DPU_OK;
+}
+
+__API_SYMBOL__ dpu_error_t
+dpu_push_sg_xfer_symbol(struct dpu_set_t dpu_set,
+    dpu_xfer_t xfer,
+    struct dpu_symbol_t symbol,
+    uint32_t symbol_offset,
+    size_t length,
+    get_block_t *get_block_info,
+    dpu_sg_xfer_flags_t flags)
+{
+    LOG_FN(DEBUG,
+        "%s, 0x%08x, %d, %d, %zd, 0x%x",
+        dpu_transfer_to_string(xfer),
+        symbol.address,
+        symbol.size,
+        symbol_offset,
+        length,
+        flags);
+
+    dpu_error_t status;
+
+    bool is_async = ((flags & DPU_SG_XFER_ASYNC) != 0);
+
+    switch (dpu_set.kind) {
+        case DPU_SET_RANKS: {
+            break;
+        }
+        case DPU_SET_DPU: {
+            fprintf(stderr, "scattered xfer to one DPU is not supported \n");
+            return DPU_ERR_INTERNAL;
+        }
+        default:
+            return DPU_ERR_INTERNAL;
+    }
+
+    dpu_mem_max_addr_t symbol_addr = (symbol).address + (symbol_offset);
+
+    // check if the symbol is a MRAM symbol
+    {
+        if (!(((symbol_addr)&MRAM_MASK) == MRAM_MASK))
+            return DPU_ERR_SG_NOT_MRAM_SYMBOL;
+    }
+
+    // alloc callback arguments and initialize ref counter
+    // the arguments are freed at the end of the last executed callback
+    struct sg_xfer_callback_args *sg_xfer_cb_args = malloc(sizeof(struct sg_xfer_callback_args));
+    dpu_get_nr_ranks(dpu_set, &sg_xfer_cb_args->freeing_refcpt);
+    sg_xfer_cb_args->get_block_info = malloc(sizeof(struct get_block_t));
+    sg_xfer_cb_args->get_block_info->f = get_block_info->f;
+    sg_xfer_cb_args->get_block_info->args = malloc(get_block_info->args_size);
+    memcpy(sg_xfer_cb_args->get_block_info->args, get_block_info->args, get_block_info->args_size);
+    sg_xfer_cb_args->get_block_info->args_size = get_block_info->args_size;
+    sg_xfer_cb_args->xfer = xfer;
+    sg_xfer_cb_args->symbol_addr = symbol_addr;
+    sg_xfer_cb_args->length = length;
+    sg_xfer_cb_args->flags = flags;
+
+    if ((status
+            = dpu_callback(dpu_set, sg_xfer_rank_handler, sg_xfer_cb_args, is_async ? DPU_CALLBACK_ASYNC : DPU_CALLBACK_DEFAULT))
+        != DPU_OK)
+        return status;
+
+    return DPU_OK;
+}
+
+__API_SYMBOL__ dpu_error_t
+dpu_push_sg_xfer(struct dpu_set_t dpu_set,
+    dpu_xfer_t xfer,
+    const char *symbol_name,
+    uint32_t symbol_offset,
+    size_t length,
+    get_block_t *get_block_info,
+    dpu_sg_xfer_flags_t flags)
+{
+    LOG_FN(DEBUG, "%s, %s, %d, %zd, 0x%x", dpu_transfer_to_string(xfer), symbol_name, symbol_offset, length, flags);
+
+    dpu_error_t status;
+
+    struct dpu_program_t *program;
+    struct dpu_symbol_t symbol;
+
+    if ((status = dpu_get_common_program(&dpu_set, &program)) != DPU_OK) {
+        return status;
+    }
+
+    if ((status = dpu_get_symbol(program, symbol_name, &symbol)) != DPU_OK) {
+        return status;
+    }
+
+    return dpu_push_sg_xfer_symbol(dpu_set, xfer, symbol, symbol_offset, length, get_block_info, flags);
 }
 
 __API_SYMBOL__ dpu_error_t

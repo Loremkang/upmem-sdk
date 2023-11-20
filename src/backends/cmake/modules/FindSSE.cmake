@@ -11,7 +11,7 @@ SET(SSE1_CODE "
   #include <xmmintrin.h>
   int main()
   {
-    __m128 a;
+    __attribute__((unused)) __m128 a;
     float vals[4] = {0,0,0,0};
     a = _mm_loadu_ps(vals);
     return 0;
@@ -21,7 +21,7 @@ SET(SSE2_CODE "
   #include <emmintrin.h>
   int main()
   {
-    __m128d a;
+    __attribute__((unused)) __m128d a;
     double vals[2] = {0,0};
     a = _mm_loadu_pd(vals);
     return 0;
@@ -32,7 +32,7 @@ SET(SSE3_CODE "
   int main( )
   {
     const int vals[4] = {0,0,0,0};
-    __m128i a;
+    __attribute__((unused)) __m128i a;
     a = _mm_lddqu_si128( (const __m128i*)vals );
     return 0;
   }")
@@ -41,8 +41,9 @@ SET(SSE4_1_CODE "
   #include <smmintrin.h>
   int main ()
   {
-    __m128i a = {0,0,0,0}, b = {0,0,0,0};
-    __m128i res = _mm_max_epi8(a, b);
+    __m128i a = _mm_set_epi8(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+    __m128i b = _mm_set_epi8(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+    __attribute__((unused)) __m128i res = _mm_max_epi8(a, b);
     return 0;
   }
 ")
@@ -51,7 +52,9 @@ SET(SSE4_2_CODE "
   #include <nmmintrin.h>
   int main()
   {
-    __m128i a = {0,0,0,0}, b = {0,0,0,0}, c = {0,0,0,0};
+    __m128i a = _mm_set_epi8(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+    __m128i b = _mm_set_epi8(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+    __attribute__((unused)) __m128i c = _mm_set_epi8(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
     c = _mm_cmpgt_epi64(a, b);
     return 0;
   }
@@ -61,7 +64,7 @@ SET(AVX_CODE "
   #include <immintrin.h>
   int main()
   {
-    __m256 a;
+    __attribute__((unused)) __m256 a;
     a = _mm256_set1_ps(0);
     return 0;
   }
@@ -92,7 +95,7 @@ SET(AVX512BW_CODE "
   int main()
   {
     __m512i mask = _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, 0);
-    __m512i load = {0};
+    __attribute__((unused)) __m512i load = {0};
     load = _mm512_shuffle_epi8(load, mask);
     return 0;
   }
@@ -102,7 +105,7 @@ SET(CLFLUSHOPT_CODE "
   #include <immintrin.h>
   int main()
   {
-    int flush;
+    int flush = 1;
     __builtin_ia32_clflushopt(&flush);
     return 0;
   }
@@ -111,9 +114,11 @@ SET(CLFLUSHOPT_CODE "
 MACRO(CHECK_SSE lang type flags)
   SET(__FLAG_I 1)
   SET(CMAKE_REQUIRED_FLAGS_SAVE ${CMAKE_REQUIRED_FLAGS})
+
   FOREACH(__FLAG ${flags})
     IF(NOT ${lang}_${type}_FOUND)
       SET(CMAKE_REQUIRED_FLAGS ${__FLAG})
+
       IF(lang STREQUAL "CXX")
         CHECK_CXX_SOURCE_RUNS("${${type}_CODE}" ${lang}_HAS_${type}_${__FLAG_I})
       ELSE()
@@ -125,21 +130,23 @@ MACRO(CHECK_SSE lang type flags)
         SET(${lang}_${type}_COMPILES TRUE CACHE BOOL "${lang} ${type} compilation support")
         SET(${lang}_${type}_FLAGS "${__FLAG}" CACHE STRING "${lang} ${type} flags")
       ELSE()
-		IF(lang STREQUAL "CXX")
+        IF(lang STREQUAL "CXX")
           CHECK_CXX_SOURCE_COMPILES("${${type}_CODE}" ${lang}_COMPILES_${type}_${__FLAG_I})
         ELSE()
           CHECK_C_SOURCE_COMPILES("${${type}_CODE}" ${lang}_COMPILES_${type}_${__FLAG_I})
         ENDIF()
 
-		IF(${lang}_COMPILES_${type}_${__FLAG_I})
+        IF(${lang}_COMPILES_${type}_${__FLAG_I})
           SET(${lang}_${type}_FOUND FALSE CACHE BOOL "${lang} ${type} support")
           SET(${lang}_${type}_COMPILES TRUE CACHE BOOL "${lang} ${type} compilation support")
           SET(${lang}_${type}_FLAGS "${__FLAG}" CACHE STRING "${lang} ${type} flags")
         ENDIF()
       ENDIF()
+
       MATH(EXPR __FLAG_I "${__FLAG_I}+1")
     ENDIF()
   ENDFOREACH()
+
   SET(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_SAVE})
 
   IF(NOT ${lang}_${type}_FOUND AND NOT ${lang}_${type}_COMPILES)
@@ -149,7 +156,6 @@ MACRO(CHECK_SSE lang type flags)
   ENDIF()
 
   MARK_AS_ADVANCED(${lang}_${type}_FOUND ${lang}_${type}_COMPILES ${lang}_${type}_FLAGS)
-
 ENDMACRO()
 
 CHECK_SSE(C "SSE1" " ;-msse;/arch:SSE")

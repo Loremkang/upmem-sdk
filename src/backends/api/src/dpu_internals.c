@@ -8,6 +8,7 @@
 #include <dpu_management.h>
 
 #include <dpu_api_log.h>
+#include <dpu_characteristics.h>
 #include <dpu_rank.h>
 #include <dpu_mask.h>
 #include <verbose_control.h>
@@ -124,13 +125,13 @@ end:
 }
 
 void
-set_pc_in_core_dump_or_restore_registers(dpu_thread_t thread,
-    iram_addr_t pc,
-    dpuinstruction_t *program,
-    iram_size_t program_size,
-    uint8_t nr_of_threads)
+set_pc_in_core_dump_or_restore_registers(dpu_thread_t thread, iram_addr_t pc, dpuinstruction_t *program, iram_size_t program_size)
 {
-    uint32_t upper_index = (uint32_t)(program_size - (12 * (nr_of_threads - thread - 1)));
+    // This function patches the coreDump/restoreRegister program
+    // with the thread current PC (to restore it at the end of the execution).
+    // Each thread has 4 possible outcomes, hence the 4 patches.
+    // See restore_carry_and_zero_flag.h in dpu-rt.
+    uint32_t upper_index = (uint32_t)(program_size - (12 * (DPU_NR_THREADS - thread - 1)));
 
     program[upper_index - 1] |= pc;
     program[upper_index - 4] |= pc;

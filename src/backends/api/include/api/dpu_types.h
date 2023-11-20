@@ -420,4 +420,28 @@ struct dpu_context_t {
     uint32_t bkp_fault_id;
 };
 
+/**
+ * @brief scatter gather transfer buffer used to store multiple blocks for one DPU
+ */
+struct sg_xfer_buffer {
+    /** Max number of blocks. */
+    uint32_t max_nr_blocks;
+    /** Array of pointers to blocks addresses. */
+    uint8_t **blocks_addr;
+    /** Array of blocks length. */
+    uint32_t *blocks_length;
+    /** Number of blocks. */
+    uint32_t nr_blocks;
+};
+
+/**
+ * @brief Type of buffer to transfer
+ */
+typedef enum dpu_transfer_matrix_type_t {
+    /** The host destination/source buffer is a single chunk of memory */
+    DPU_DEFAULT_XFER_MATRIX,
+    /** The host destination/source buffer is scattered across multible independent blocks of memory */
+    DPU_SG_XFER_MATRIX
+} dpu_transfer_matrix_type_t;
+
 #endif // DPU_TYPES_H

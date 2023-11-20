@@ -346,6 +346,25 @@ dpu_transfer_matrix_add_dpu(struct dpu_t *dpu, struct dpu_transfer_matrix *trans
     transfer_matrix->ptr[_transfer_matrix_index(dpu)] = buffer;
 }
 
+__PERF_PROFILING_SYMBOL__ dpu_error_t
+dpu_transfer_matrix_add_dpu_block(struct dpu_t *dpu, struct dpu_transfer_matrix *transfer_matrix, void *buffer, uint32_t length)
+{
+    LOG_DPU(DEBUG, dpu, "%p, %p", transfer_matrix, buffer);
+
+    if (transfer_matrix->type == DPU_SG_XFER_MATRIX) {
+        struct sg_xfer_buffer *sg_ptr = transfer_matrix->sg_ptr[_transfer_matrix_index(dpu)];
+        if (sg_ptr->nr_blocks >= sg_ptr->max_nr_blocks)
+            return DPU_ERR_INTERNAL;
+        sg_ptr->blocks_addr[sg_ptr->nr_blocks] = buffer;
+        sg_ptr->blocks_length[sg_ptr->nr_blocks] = length;
+        sg_ptr->nr_blocks++;
+    } else {
+        return DPU_ERR_INTERNAL;
+    }
+
+    return DPU_OK;
+}
+
 __PERF_PROFILING_SYMBOL__ __API_SYMBOL__ void
 dpu_transfer_matrix_set_all(struct dpu_rank_t *rank, struct dpu_transfer_matrix *transfer_matrix, void *buffer)
 {
@@ -724,7 +743,7 @@ access_mram_using_dpu_program_individual(struct dpu_t *dpu,
         context.scheduling[each_thread] = 0xff;
     }
     context_init = true;
-    FF(dpu_initialize_fault_process_for_dpu(dpu, &context));
+    FF(dpu_initialize_fault_process_for_dpu(dpu, &context, (mram_addr_t)0 /*nullptr*/));
     FF(dpu_extract_pcs_for_dpu(dpu, &context));
     FF(dpu_extract_context_for_dpu(dpu, &context));
 

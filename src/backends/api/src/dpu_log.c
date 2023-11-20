@@ -91,11 +91,10 @@ static dpu_error_t
 parse_and_print_argument_section(dpulog_reader_t *reader, dpu_log_print_fct_t print_fct, void *print_fct_arg)
 {
     unsigned int fmt_index;
-    char l_fmt;
 
     for (fmt_index = 0; (fmt_index < reader->format_count); fmt_index++) {
         size_t l_fmt_index = strlen(reader->format[fmt_index]) - 1;
-        l_fmt = reader->format[fmt_index][l_fmt_index];
+        char l_fmt = reader->format[fmt_index][l_fmt_index];
         switch (l_fmt) {
             case 's':
                 DPU_LOG_CHECK(print_fct(print_fct_arg, reader->format[fmt_index], reader->buffer));
@@ -110,7 +109,8 @@ parse_and_print_argument_section(dpulog_reader_t *reader, dpu_log_print_fct_t pr
             case 'b': {
                 // custom formatter for binary output
 
-                int i = *(int *)(reader->buffer);
+                uint i;
+                memcpy(&i, reader->buffer, sizeof(uint));
                 for (int each_bit = 0; each_bit < 32; ++each_bit) {
                     DPU_LOG_CHECK(print_fct(print_fct_arg, "%u", (i >> each_bit) & 1));
                 }
@@ -134,11 +134,13 @@ parse_and_print_argument_section(dpulog_reader_t *reader, dpu_log_print_fct_t pr
                 }
 
                 if (is_64_bit) {
-                    long l = *(long *)(reader->buffer);
+                    long l;
+                    memcpy(&l, reader->buffer, sizeof(long));
                     DPU_LOG_CHECK(print_fct(print_fct_arg, reader->format[fmt_index], l));
                     reader->buffer += sizeof(long);
                 } else {
-                    int i = *(int *)(reader->buffer);
+                    int i;
+                    memcpy(&i, reader->buffer, sizeof(int));
                     DPU_LOG_CHECK(print_fct(print_fct_arg, reader->format[fmt_index], i));
                     reader->buffer += sizeof(int);
                 }
@@ -146,7 +148,8 @@ parse_and_print_argument_section(dpulog_reader_t *reader, dpu_log_print_fct_t pr
             case 'e':
             case 'E':
             case 'f': {
-                double d = *(double *)(reader->buffer);
+                double d;
+                memcpy(&d, reader->buffer, sizeof(double));
                 DPU_LOG_CHECK(print_fct(print_fct_arg, reader->format[fmt_index], d));
                 reader->buffer += sizeof(double);
             } break;

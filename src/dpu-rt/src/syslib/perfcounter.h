@@ -71,6 +71,7 @@ perfcounter_config(perfcounter_config_t config, bool reset_value);
 #else
 #define perfcounter_config(config, reset_value)                                                                                  \
     do {                                                                                                                         \
+        _Static_assert(0, "[DPU_ERROR]: call to perfcounter_config is incompatible with -pg option.");                           \
     } while (0)
 #endif /* !DPU_PROFILING */
 

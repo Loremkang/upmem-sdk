@@ -41,7 +41,11 @@ main(int argc, char **argv)
         exit_usage(argv[0]);
     }
 
-    asprintf(&profile, "backend=hw,rankPath=/dev/dpu_rank%u", rank_id);
+    int result = asprintf(&profile, "backend=hw,rankPath=/dev/dpu_rank%u", rank_id);
+    if (result < 0) {
+        fprintf(stderr, "%s: Could not set profile\n", argv[0]);
+        return -1;
+    }
 
     status = dpu_get_rank_of_type(profile, &rank);
     if (status != DPU_OK) {

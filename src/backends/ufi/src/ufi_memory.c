@@ -7,6 +7,7 @@
 #include <dpu_error.h>
 #include <dpu_rank.h>
 #include <dpu_mask.h>
+#include <assert.h>
 
 #include <dpu_management.h>
 #include <dpu_internals.h>
@@ -224,11 +225,16 @@ duplicate_transfer_matrix(struct dpu_rank_t *rank,
 		     each_dpu < rank->description->hw.topology
 					.nr_of_dpus_per_control_interface;
 		     each_dpu += 2) {
+			bool first_dpu_line_has_transfer = 0;
+			bool second_dpu_line_has_transfer = 0;
+			bool is_duplication_needed_for_line = 0;
 			for (each_slice = 0;
 			     each_slice < rank->description->hw.topology
 						  .nr_of_control_interfaces;
 			     ++each_slice) {
 				int idx_dpu_first, idx_dpu_second;
+				bool first_dpu_has_transfer = 0,
+				     second_dpu_has_transfer = 0;
 
 				idx_dpu_first = get_transfer_matrix_index(
 					rank, each_slice, each_dpu);
@@ -239,14 +245,21 @@ duplicate_transfer_matrix(struct dpu_rank_t *rank,
 					    ->enabled &&
 				    dpu_get(rank, each_slice, each_dpu + 1)
 					    ->enabled) {
-					if ((!transfer_matrix
-						      ->ptr[idx_dpu_first] ||
-					     !transfer_matrix
-						      ->ptr[idx_dpu_second]) &&
-					    (transfer_matrix
-						     ->ptr[idx_dpu_first] ||
-					     transfer_matrix
-						     ->ptr[idx_dpu_second])) {
+					first_dpu_has_transfer =
+						(transfer_matrix
+							 ->ptr[idx_dpu_first] !=
+						 0);
+					second_dpu_has_transfer =
+						(transfer_matrix
+							 ->ptr[idx_dpu_second] !=
+						 0);
+					first_dpu_line_has_transfer |=
+						first_dpu_has_transfer;
+					second_dpu_line_has_transfer |=
+						second_dpu_has_transfer;
+
+					if (first_dpu_has_transfer !=
+					    second_dpu_has_transfer) {
 						dpu_member_id_t dpu_id_notnull =
 							transfer_matrix->ptr
 									[idx_dpu_first] ?
@@ -262,11 +275,21 @@ duplicate_transfer_matrix(struct dpu_rank_t *rank,
 							each_slice, each_dpu,
 							each_dpu + 1);
 
-						is_duplication_needed = true;
+						is_duplication_needed_for_line =
+							true;
 						break;
 					}
 				}
 			}
+			/*
+			 * the matrix duplication is needed if
+			 * 1) both dpu lines have at least one dpu which is part of the transfer
+			 * 2) there is a mux conflict on at least one CI/chip
+			 **/
+			if (first_dpu_line_has_transfer &&
+			    second_dpu_line_has_transfer &&
+			    is_duplication_needed_for_line)
+				is_duplication_needed = true;
 
 			if (is_duplication_needed)
 				break;
@@ -369,6 +392,8 @@ static dpu_error_t host_get_access_for_transfer_matrix(
 
 	for (each_dpu = 0; each_dpu < nr_dpus_per_ci; each_dpu += 2) {
 		dpu_slice_id_t each_slice;
+		uint8_t mask1 = 0;
+		uint8_t mask2 = 0;
 		uint8_t mask = 0;
 
 		for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
@@ -383,14 +408,17 @@ static dpu_error_t host_get_access_for_transfer_matrix(
 				(transfer_matrix->ptr[idx_second_dpu] != NULL);
 
 			if (dpu_get(rank, each_slice, each_dpu)->enabled) {
-				mask |= get_mux_first_dpu << each_slice;
-			} else if (dpu_get(rank, each_slice, each_dpu + 1)
-					   ->enabled) {
-				mask |= get_mux_second_dpu << each_slice;
+				mask1 |= get_mux_first_dpu << each_slice;
+			}
+			if (dpu_get(rank, each_slice, each_dpu + 1)->enabled) {
+				mask2 |= get_mux_second_dpu << each_slice;
 			}
 		}
 
-		if (mask) {
+		if (mask1 || mask2) {
+			// there should not be any mux conflict
+			assert(!mask1 || !mask2 || (mask1 == mask2));
+			mask = mask1 | mask2;
 			FF(dpu_switch_mux_for_dpu_line(rank, each_dpu, mask));
 			FF(dpu_switch_mux_for_dpu_line(rank, each_dpu + 1,
 						       mask));
@@ -487,12 +515,14 @@ copy_mram_for_dpus(struct dpu_rank_t *rank, dpu_transfer_type_t type,
 	} else {
 		even_transfer_matrix.size = transfer_matrix->size;
 		even_transfer_matrix.offset = transfer_matrix->offset;
+		even_transfer_matrix.type = transfer_matrix->type;
 		FF(host_get_access_for_transfer_matrix(rank,
 						       &even_transfer_matrix));
 		FF(do_mram_transfer(rank, type, &even_transfer_matrix));
 
 		odd_transfer_matrix.size = transfer_matrix->size;
 		odd_transfer_matrix.offset = transfer_matrix->offset;
+		odd_transfer_matrix.type = transfer_matrix->type;
 		FF(host_get_access_for_transfer_matrix(rank,
 						       &odd_transfer_matrix));
 		FF(do_mram_transfer(rank, type, &odd_transfer_matrix));

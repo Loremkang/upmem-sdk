@@ -7,29 +7,27 @@ r"""Wrapper for dpu_vpd.h
 Do not modify this file.
 """
 
-import glob
 import re
-import os.path
-import ctypes.util
-import ctypes
 import platform
+import os.path
+import glob
+import ctypes.util
 __docformat__ = "restructuredtext"
 
-# Begin preamble for Python v(3, 2)
+# Begin preamble for Python
 
 import ctypes
-import os
 import sys
-from ctypes import *
+from ctypes import *  # noqa: F401, F403
 
-_int_types = (c_int16, c_int32)
+_int_types = (ctypes.c_int16, ctypes.c_int32)
 if hasattr(ctypes, "c_int64"):
-    # Some builds of ctypes apparently do not have c_int64
+    # Some builds of ctypes apparently do not have ctypes.c_int64
     # defined; it's a pretty good bet that these builds do not
     # have 64-bit pointers.
-    _int_types += (c_int64,)
+    _int_types += (ctypes.c_int64,)
 for t in _int_types:
-    if sizeof(t) == sizeof(c_size_t):
+    if ctypes.sizeof(t) == ctypes.sizeof(ctypes.c_size_t):
         c_ptrdiff_t = t
 del t
 del _int_types
@@ -67,12 +65,6 @@ class UserString:
 
     def __hash__(self):
         return hash(self.data)
-
-    def __cmp__(self, string):
-        if isinstance(string, UserString):
-            return cmp(self.data, string.data)
-        else:
-            return cmp(self.data, string)
 
     def __le__(self, string):
         if isinstance(string, UserString):
@@ -345,11 +337,12 @@ class MutableString(UserString):
         return self
 
 
-class String(MutableString, Union):
+class String(MutableString, ctypes.Union):
 
-    _fields_ = [("raw", POINTER(c_char)), ("data", c_char_p)]
+    _fields_ = [("raw", ctypes.POINTER(ctypes.c_char)),
+                ("data", ctypes.c_char_p)]
 
-    def __init__(self, obj=""):
+    def __init__(self, obj=b""):
         if isinstance(obj, (bytes, UserString)):
             self.data = bytes(obj)
         else:
@@ -361,7 +354,7 @@ class String(MutableString, Union):
     def from_param(cls, obj):
         # Convert None or 0
         if obj is None or obj == 0:
-            return cls(POINTER(c_char)())
+            return cls(ctypes.POINTER(ctypes.c_char)())
 
         # Convert from String
         elif isinstance(obj, String):
@@ -376,19 +369,19 @@ class String(MutableString, Union):
             return cls(obj.encode())
 
         # Convert from c_char_p
-        elif isinstance(obj, c_char_p):
+        elif isinstance(obj, ctypes.c_char_p):
             return obj
 
-        # Convert from POINTER(c_char)
-        elif isinstance(obj, POINTER(c_char)):
+        # Convert from POINTER(ctypes.c_char)
+        elif isinstance(obj, ctypes.POINTER(ctypes.c_char)):
             return obj
 
         # Convert from raw pointer
         elif isinstance(obj, int):
-            return cls(cast(obj, POINTER(c_char)))
+            return cls(ctypes.cast(obj, ctypes.POINTER(ctypes.c_char)))
 
-        # Convert from c_char array
-        elif isinstance(obj, c_char * len(obj)):
+        # Convert from ctypes.c_char array
+        elif isinstance(obj, ctypes.c_char * len(obj)):
             return obj
 
         # Convert from object
@@ -408,7 +401,7 @@ def ReturnString(obj, func=None, arguments=None):
 # primitive datatypes.
 #
 # Non-primitive return values wrapped with UNCHECKED won't be
-# typechecked, and will be converted to c_void_p.
+# typechecked, and will be converted to ctypes.c_void_p.
 def UNCHECKED(type):
     if hasattr(
             type,
@@ -417,7 +410,7 @@ def UNCHECKED(type):
             str) and type._type_ != "P":
         return type
     else:
-        return c_void_p
+        return ctypes.c_void_p
 
 
 # ctypes doesn't have direct support for variadic functions, so we have to write
@@ -467,6 +460,9 @@ _libdirs = []
 
 # Begin loader
 
+"""
+Load libraries - appropriately for all our supported platforms
+"""
 # ----------------------------------------------------------------------------
 # Copyright (c) 2008 David James
 # Copyright (c) 2006-2008 Alex Holkner
@@ -503,17 +499,24 @@ _libdirs = []
 
 
 def _environ_path(name):
+    """Split an environment variable into a path-like list elements"""
     if name in os.environ:
         return os.environ[name].split(":")
-    else:
-        return []
+    return []
 
 
-class LibraryLoader(object):
+class LibraryLoader:
+    """
+    A base class For loading of libraries ;-)
+    Subclasses load libraries for specific platforms.
+    """
+
     # library names formatted specifically for platforms
     name_formats = ["%s"]
 
-    class Lookup(object):
+    class Lookup:
+        """Looking up calling conventions for a platform"""
+
         mode = ctypes.DEFAULT_MODE
 
         def __init__(self, path):
@@ -521,6 +524,7 @@ class LibraryLoader(object):
             self.access = dict(cdecl=ctypes.CDLL(path, self.mode))
 
         def get(self, name, calling_convention="cdecl"):
+            """Return the given name according to the selected calling convention"""
             if calling_convention not in self.access:
                 raise LookupError(
                     "Unknown calling convention '{}' for function '{}'".format(
@@ -530,6 +534,7 @@ class LibraryLoader(object):
             return getattr(self.access[calling_convention], name)
 
         def has(self, name, calling_convention="cdecl"):
+            """Return True if this given calling convention finds the given 'name'"""
             if calling_convention not in self.access:
                 return False
             return hasattr(self.access[calling_convention], name)
@@ -545,9 +550,10 @@ class LibraryLoader(object):
         paths = self.getpaths(libname)
 
         for path in paths:
+            # noinspection PyBroadException
             try:
                 return self.Lookup(path)
-            except BaseException:
+            except Exception:  # pylint: disable=broad-except
                 pass
 
         raise ImportError("Could not load %s." % libname)
@@ -565,10 +571,17 @@ class LibraryLoader(object):
                     # dir_i should be absolute already
                     yield os.path.join(dir_i, fmt % libname)
 
+            # check if this code is even stored in a physical file
+            try:
+                this_file = __file__
+            except NameError:
+                this_file = None
+
             # then we search the directory where the generated python interface
             # is stored
-            for fmt in self.name_formats:
-                yield os.path.abspath(os.path.join(os.path.dirname(__file__), fmt % libname))
+            if this_file is not None:
+                for fmt in self.name_formats:
+                    yield os.path.abspath(os.path.join(os.path.dirname(__file__), fmt % libname))
 
             # now, use the ctypes tools to try to find the library
             for fmt in self.name_formats:
@@ -585,7 +598,8 @@ class LibraryLoader(object):
             for fmt in self.name_formats:
                 yield os.path.abspath(os.path.join(os.path.curdir, fmt % libname))
 
-    def getplatformpaths(self, libname):
+    def getplatformpaths(self, _libname):  # pylint: disable=no-self-use
+        """Return all the library paths available in this platform"""
         return []
 
 
@@ -593,6 +607,8 @@ class LibraryLoader(object):
 
 
 class DarwinLibraryLoader(LibraryLoader):
+    """Library loader for MacOS"""
+
     name_formats = [
         "lib%s.dylib",
         "lib%s.so",
@@ -604,6 +620,10 @@ class DarwinLibraryLoader(LibraryLoader):
     ]
 
     class Lookup(LibraryLoader.Lookup):
+        """
+        Looking up library files for this platform (Darwin aka MacOS)
+        """
+
         # Darwin requires dlopen to be called with mode RTLD_GLOBAL instead
         # of the default RTLD_LOCAL.  Without this, you end up with
         # libraries not being loadable, resulting in "Symbol not found"
@@ -614,13 +634,14 @@ class DarwinLibraryLoader(LibraryLoader):
         if os.path.pathsep in libname:
             names = [libname]
         else:
-            names = [format % libname for format in self.name_formats]
+            names = [fmt % libname for fmt in self.name_formats]
 
-        for dir in self.getdirs(libname):
+        for directory in self.getdirs(libname):
             for name in names:
-                yield os.path.join(dir, name)
+                yield os.path.join(directory, name)
 
-    def getdirs(self, libname):
+    @staticmethod
+    def getdirs(libname):
         """Implements the dylib search as specified in Apple documentation:
 
         http://developer.apple.com/documentation/DeveloperTools/Conceptual/
@@ -635,7 +656,10 @@ class DarwinLibraryLoader(LibraryLoader):
             "DYLD_FALLBACK_LIBRARY_PATH")
         if not dyld_fallback_library_path:
             dyld_fallback_library_path = [
-                os.path.expanduser("~/lib"), "/usr/local/lib", "/usr/lib"]
+                os.path.expanduser("~/lib"),
+                "/usr/local/lib",
+                "/usr/lib",
+            ]
 
         dirs = []
 
@@ -644,8 +668,9 @@ class DarwinLibraryLoader(LibraryLoader):
         else:
             dirs.extend(_environ_path("LD_LIBRARY_PATH"))
             dirs.extend(_environ_path("DYLD_LIBRARY_PATH"))
+            dirs.extend(_environ_path("LD_RUN_PATH"))
 
-        if hasattr(sys, "frozen") and sys.frozen == "macosx_app":
+        if hasattr(sys, "frozen") and getattr(sys, "frozen") == "macosx_app":
             dirs.append(
                 os.path.join(
                     os.environ["RESOURCEPATH"],
@@ -661,50 +686,60 @@ class DarwinLibraryLoader(LibraryLoader):
 
 
 class PosixLibraryLoader(LibraryLoader):
+    """Library loader for POSIX-like systems (including Linux)"""
+
     _ld_so_cache = None
 
     _include = re.compile(r"^\s*include\s+(?P<pattern>.*)")
 
+    name_formats = ["lib%s.so", "%s.so", "%s"]
+
     class _Directories(dict):
+        """Deal with directories"""
+
         def __init__(self):
+            dict.__init__(self)
             self.order = 0
 
         def add(self, directory):
+            """Add a directory to our current set of directories"""
             if len(directory) > 1:
                 directory = directory.rstrip(os.path.sep)
             # only adds and updates order if exists and not already in set
             if not os.path.exists(directory):
                 return
-            o = self.setdefault(directory, self.order)
-            if o == self.order:
+            order = self.setdefault(directory, self.order)
+            if order == self.order:
                 self.order += 1
 
         def extend(self, directories):
-            for d in directories:
-                self.add(d)
+            """Add a list of directories to our set"""
+            for a_dir in directories:
+                self.add(a_dir)
 
         def ordered(self):
-            return (i[0] for i in sorted(self.items(), key=lambda D: D[1]))
+            """Sort the list of directories"""
+            return (i[0] for i in sorted(self.items(), key=lambda d: d[1]))
 
     def _get_ld_so_conf_dirs(self, conf, dirs):
         """
-        Recursive funtion to help parse all ld.so.conf files, including proper
+        Recursive function to help parse all ld.so.conf files, including proper
         handling of the `include` directive.
         """
 
         try:
-            with open(conf) as f:
-                for D in f:
-                    D = D.strip()
-                    if not D:
+            with open(conf) as fileobj:
+                for dirname in fileobj:
+                    dirname = dirname.strip()
+                    if not dirname:
                         continue
 
-                    m = self._include.match(D)
-                    if not m:
-                        dirs.add(D)
+                    match = self._include.match(dirname)
+                    if not match:
+                        dirs.add(dirname)
                     else:
-                        for D2 in glob.glob(m.group("pattern")):
-                            self._get_ld_so_conf_dirs(D2, dirs)
+                        for dir2 in glob.glob(match.group("pattern")):
+                            self._get_ld_so_conf_dirs(dir2, dirs)
         except IOError:
             pass
 
@@ -719,7 +754,7 @@ class PosixLibraryLoader(LibraryLoader):
         directories = self._Directories()
         for name in (
             "LD_LIBRARY_PATH",
-            "SHLIB_PATH",  # HPUX
+            "SHLIB_PATH",  # HP-UX
             "LIBPATH",  # OS/2, AIX
             "LIBRARY_PATH",  # BE/OS
         ):
@@ -746,9 +781,11 @@ class PosixLibraryLoader(LibraryLoader):
                 unix_lib_dirs_list += ["/lib/i386-linux-gnu",
                                        "/usr/lib/i386-linux-gnu"]
             elif bitage.startswith("64"):
-                # Assume Intel/AMD x86 compat
-                unix_lib_dirs_list += ["/lib/x86_64-linux-gnu",
-                                       "/usr/lib/x86_64-linux-gnu"]
+                # Assume Intel/AMD x86 compatible
+                unix_lib_dirs_list += [
+                    "/lib/x86_64-linux-gnu",
+                    "/usr/lib/x86_64-linux-gnu",
+                ]
             else:
                 # guess...
                 unix_lib_dirs_list += glob.glob("/lib/*linux-gnu")
@@ -756,10 +793,10 @@ class PosixLibraryLoader(LibraryLoader):
 
         cache = {}
         lib_re = re.compile(r"lib(.*)\.s[ol]")
-        ext_re = re.compile(r"\.s[ol]$")
-        for dir in directories.ordered():
+        # ext_re = re.compile(r"\.s[ol]$")
+        for our_dir in directories.ordered():
             try:
-                for path in glob.glob("%s/*.s[ol]*" % dir):
+                for path in glob.glob("%s/*.s[ol]*" % our_dir):
                     file = os.path.basename(path)
 
                     # Index by filename
@@ -793,9 +830,13 @@ class PosixLibraryLoader(LibraryLoader):
 
 
 class WindowsLibraryLoader(LibraryLoader):
+    """Library loader for Microsoft Windows"""
+
     name_formats = ["%s.dll", "lib%s.dll", "%slib.dll", "%s"]
 
     class Lookup(LibraryLoader.Lookup):
+        """Lookup class for Windows libraries..."""
+
         def __init__(self, path):
             super(WindowsLibraryLoader.Lookup, self).__init__(path)
             self.access["stdcall"] = ctypes.windll.LoadLibrary(path)
@@ -822,10 +863,10 @@ def add_library_search_dirs(other_dirs):
     If library paths are relative, convert them to absolute with respect to this
     file's directory
     """
-    for F in other_dirs:
-        if not os.path.isabs(F):
-            F = os.path.abspath(F)
-        load_library.other_dirs.append(F)
+    for path in other_dirs:
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        load_library.other_dirs.append(path)
 
 
 del loaderclass
@@ -841,6 +882,22 @@ _libs["libdpuvpd.so"] = load_library("libdpuvpd.so")
 # End libraries
 
 # No modules
+
+__uint8_t = c_ubyte  # /usr/include/x86_64-linux-gnu/bits/types.h: 37
+
+__uint16_t = c_ushort  # /usr/include/x86_64-linux-gnu/bits/types.h: 39
+
+__uint32_t = c_uint  # /usr/include/x86_64-linux-gnu/bits/types.h: 41
+
+__uint64_t = c_ulong  # /usr/include/x86_64-linux-gnu/bits/types.h: 44
+
+uint8_t = __uint8_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 24
+
+uint16_t = __uint16_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 25
+
+uint32_t = __uint32_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 26
+
+uint64_t = __uint64_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 27
 
 enum_dpu_vpd_repair_type = c_int  # api/include/lowlevel/dpu_vpd_structures.h: 51
 
@@ -862,9 +919,9 @@ struct_dpu_vpd_rank_data.__slots__ = [
     'iram_repair',
 ]
 struct_dpu_vpd_rank_data._fields_ = [
-    ('dpu_disabled', c_uint64),
-    ('wram_repair', c_uint64),
-    ('iram_repair', c_uint64),
+    ('dpu_disabled', uint64_t),
+    ('wram_repair', uint64_t),
+    ('iram_repair', uint64_t),
 ]
 
 # api/include/lowlevel/dpu_vpd_structures.h: 73
@@ -885,14 +942,14 @@ struct_dpu_vpd_repair_entry.__slots__ = [
     'bits',
 ]
 struct_dpu_vpd_repair_entry._fields_ = [
-    ('iram_wram', c_uint8),
-    ('rank', c_uint8),
-    ('ci', c_uint8),
-    ('dpu', c_uint8),
-    ('bank', c_uint8),
-    ('__padding', c_uint8),
-    ('address', c_uint16),
-    ('bits', c_uint64),
+    ('iram_wram', uint8_t),
+    ('rank', uint8_t),
+    ('ci', uint8_t),
+    ('dpu', uint8_t),
+    ('bank', uint8_t),
+    ('__padding', uint8_t),
+    ('address', uint16_t),
+    ('bits', uint64_t),
 ]
 
 # api/include/lowlevel/dpu_vpd_structures.h: 95
@@ -914,12 +971,12 @@ struct_dpu_vpd_header.__slots__ = [
 ]
 struct_dpu_vpd_header._fields_ = [
     ('struct_id', c_char * int(4)),
-    ('struct_ver', c_uint32),
-    ('struct_size', c_uint16),
-    ('rank_count', c_uint8),
-    ('__padding_0', c_uint8),
-    ('repair_count', c_uint16),
-    ('__padding_1', c_uint16),
+    ('struct_ver', uint32_t),
+    ('struct_size', uint16_t),
+    ('rank_count', uint8_t),
+    ('__padding_0', uint8_t),
+    ('repair_count', uint16_t),
+    ('__padding_1', uint16_t),
     ('ranks', struct_dpu_vpd_rank_data * int(4)),
 ]
 
@@ -971,8 +1028,8 @@ struct_dpu_vpd_string_pair.__slots__ = [
     'next',
 ]
 struct_dpu_vpd_string_pair._fields_ = [
-    ('key', POINTER(c_uint8)),
-    ('value', POINTER(c_uint8)),
+    ('key', POINTER(uint8_t)),
+    ('value', POINTER(uint8_t)),
     ('value_len', c_int),
     ('value_type', c_int),
     ('next', POINTER(struct_dpu_vpd_string_pair)),
@@ -1050,7 +1107,7 @@ if _libs["libdpuvpd.so"].has("dpu_vpd_db_update", "cdecl"):
     dpu_vpd_db_update.argtypes = [
         POINTER(struct_dpu_vpd_database),
         String,
-        POINTER(c_uint8),
+        POINTER(uint8_t),
         c_int,
         c_int]
     dpu_vpd_db_update.restype = enum_dpu_vpd_error
@@ -1117,7 +1174,7 @@ if _libs["libdpuvpd.so"].has("dpu_vpd_disable_dpu", "cdecl"):
     dpu_vpd_disable_dpu = _libs["libdpuvpd.so"].get(
         "dpu_vpd_disable_dpu", "cdecl")
     dpu_vpd_disable_dpu.argtypes = [
-        POINTER(struct_dpu_vpd), c_uint8, c_uint8, c_uint8]
+        POINTER(struct_dpu_vpd), uint8_t, uint8_t, uint8_t]
     dpu_vpd_disable_dpu.restype = enum_dpu_vpd_error
 
 # api/include/lowlevel/dpu_vpd.h: 156
@@ -1125,7 +1182,7 @@ if _libs["libdpuvpd.so"].has("dpu_vpd_enable_dpu", "cdecl"):
     dpu_vpd_enable_dpu = _libs["libdpuvpd.so"].get(
         "dpu_vpd_enable_dpu", "cdecl")
     dpu_vpd_enable_dpu.argtypes = [
-        POINTER(struct_dpu_vpd), c_uint8, c_uint8, c_uint8]
+        POINTER(struct_dpu_vpd), uint8_t, uint8_t, uint8_t]
     dpu_vpd_enable_dpu.restype = enum_dpu_vpd_error
 
 # api/include/lowlevel/dpu_vpd_structures.h: 22
@@ -1142,7 +1199,7 @@ except BaseException:
 
 # api/include/lowlevel/dpu_vpd_structures.h: 34
 try:
-    VPD_STRUCT_VERSION = 16384
+    VPD_STRUCT_VERSION = 0x0004000
 except BaseException:
     pass
 
@@ -1154,7 +1211,7 @@ except BaseException:
 
 # api/include/lowlevel/dpu_vpd_structures.h: 46
 try:
-    VPD_UNDEFINED_REPAIR_COUNT = (c_uint16(ord_if_char((-1)))).value
+    VPD_UNDEFINED_REPAIR_COUNT = (uint16_t(ord_if_char((-1)))).value
 except BaseException:
     pass
 
@@ -1169,43 +1226,43 @@ except BaseException:
 
 # vpd/src/dpu_flash_partition.h: 4
 try:
-    FLASH_BASE_ADDRESS = 134217728
+    FLASH_BASE_ADDRESS = 0x08000000
 except BaseException:
     pass
 
 # vpd/src/dpu_flash_partition.h: 5
 try:
-    FLASH_SIZE = 131072
+    FLASH_SIZE = 0x20000
 except BaseException:
     pass
 
 # vpd/src/dpu_flash_partition.h: 7
 try:
-    FLASH_OFF_RO = 0
+    FLASH_OFF_RO = 0x0
 except BaseException:
     pass
 
 # vpd/src/dpu_flash_partition.h: 8
 try:
-    FLASH_OFF_RW = 61440
+    FLASH_OFF_RW = 0xF000
 except BaseException:
     pass
 
 # vpd/src/dpu_flash_partition.h: 9
 try:
-    FLASH_OFF_VPD = 122880
+    FLASH_OFF_VPD = 0x1E000
 except BaseException:
     pass
 
 # vpd/src/dpu_flash_partition.h: 10
 try:
-    FLASH_OFF_VPD_DB = 124928
+    FLASH_OFF_VPD_DB = 0x1E800
 except BaseException:
     pass
 
 # vpd/src/dpu_flash_partition.h: 11
 try:
-    FLASH_OFF_SPD = 129024
+    FLASH_OFF_SPD = 0x1F800
 except BaseException:
     pass
 

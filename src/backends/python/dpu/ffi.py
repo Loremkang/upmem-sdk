@@ -7,29 +7,27 @@ r"""Wrapper for dpu.h
 Do not modify this file.
 """
 
-import glob
 import re
-import os.path
-import ctypes.util
-import ctypes
 import platform
+import os.path
+import glob
+import ctypes.util
 __docformat__ = "restructuredtext"
 
-# Begin preamble for Python v(3, 2)
+# Begin preamble for Python
 
 import ctypes
-import os
 import sys
-from ctypes import *
+from ctypes import *  # noqa: F401, F403
 
-_int_types = (c_int16, c_int32)
+_int_types = (ctypes.c_int16, ctypes.c_int32)
 if hasattr(ctypes, "c_int64"):
-    # Some builds of ctypes apparently do not have c_int64
+    # Some builds of ctypes apparently do not have ctypes.c_int64
     # defined; it's a pretty good bet that these builds do not
     # have 64-bit pointers.
-    _int_types += (c_int64,)
+    _int_types += (ctypes.c_int64,)
 for t in _int_types:
-    if sizeof(t) == sizeof(c_size_t):
+    if ctypes.sizeof(t) == ctypes.sizeof(ctypes.c_size_t):
         c_ptrdiff_t = t
 del t
 del _int_types
@@ -67,12 +65,6 @@ class UserString:
 
     def __hash__(self):
         return hash(self.data)
-
-    def __cmp__(self, string):
-        if isinstance(string, UserString):
-            return cmp(self.data, string.data)
-        else:
-            return cmp(self.data, string)
 
     def __le__(self, string):
         if isinstance(string, UserString):
@@ -345,11 +337,12 @@ class MutableString(UserString):
         return self
 
 
-class String(MutableString, Union):
+class String(MutableString, ctypes.Union):
 
-    _fields_ = [("raw", POINTER(c_char)), ("data", c_char_p)]
+    _fields_ = [("raw", ctypes.POINTER(ctypes.c_char)),
+                ("data", ctypes.c_char_p)]
 
-    def __init__(self, obj=""):
+    def __init__(self, obj=b""):
         if isinstance(obj, (bytes, UserString)):
             self.data = bytes(obj)
         else:
@@ -361,7 +354,7 @@ class String(MutableString, Union):
     def from_param(cls, obj):
         # Convert None or 0
         if obj is None or obj == 0:
-            return cls(POINTER(c_char)())
+            return cls(ctypes.POINTER(ctypes.c_char)())
 
         # Convert from String
         elif isinstance(obj, String):
@@ -376,19 +369,19 @@ class String(MutableString, Union):
             return cls(obj.encode())
 
         # Convert from c_char_p
-        elif isinstance(obj, c_char_p):
+        elif isinstance(obj, ctypes.c_char_p):
             return obj
 
-        # Convert from POINTER(c_char)
-        elif isinstance(obj, POINTER(c_char)):
+        # Convert from POINTER(ctypes.c_char)
+        elif isinstance(obj, ctypes.POINTER(ctypes.c_char)):
             return obj
 
         # Convert from raw pointer
         elif isinstance(obj, int):
-            return cls(cast(obj, POINTER(c_char)))
+            return cls(ctypes.cast(obj, ctypes.POINTER(ctypes.c_char)))
 
-        # Convert from c_char array
-        elif isinstance(obj, c_char * len(obj)):
+        # Convert from ctypes.c_char array
+        elif isinstance(obj, ctypes.c_char * len(obj)):
             return obj
 
         # Convert from object
@@ -408,7 +401,7 @@ def ReturnString(obj, func=None, arguments=None):
 # primitive datatypes.
 #
 # Non-primitive return values wrapped with UNCHECKED won't be
-# typechecked, and will be converted to c_void_p.
+# typechecked, and will be converted to ctypes.c_void_p.
 def UNCHECKED(type):
     if hasattr(
             type,
@@ -417,7 +410,7 @@ def UNCHECKED(type):
             str) and type._type_ != "P":
         return type
     else:
-        return c_void_p
+        return ctypes.c_void_p
 
 
 # ctypes doesn't have direct support for variadic functions, so we have to write
@@ -467,6 +460,9 @@ _libdirs = []
 
 # Begin loader
 
+"""
+Load libraries - appropriately for all our supported platforms
+"""
 # ----------------------------------------------------------------------------
 # Copyright (c) 2008 David James
 # Copyright (c) 2006-2008 Alex Holkner
@@ -503,17 +499,24 @@ _libdirs = []
 
 
 def _environ_path(name):
+    """Split an environment variable into a path-like list elements"""
     if name in os.environ:
         return os.environ[name].split(":")
-    else:
-        return []
+    return []
 
 
-class LibraryLoader(object):
+class LibraryLoader:
+    """
+    A base class For loading of libraries ;-)
+    Subclasses load libraries for specific platforms.
+    """
+
     # library names formatted specifically for platforms
     name_formats = ["%s"]
 
-    class Lookup(object):
+    class Lookup:
+        """Looking up calling conventions for a platform"""
+
         mode = ctypes.DEFAULT_MODE
 
         def __init__(self, path):
@@ -521,6 +524,7 @@ class LibraryLoader(object):
             self.access = dict(cdecl=ctypes.CDLL(path, self.mode))
 
         def get(self, name, calling_convention="cdecl"):
+            """Return the given name according to the selected calling convention"""
             if calling_convention not in self.access:
                 raise LookupError(
                     "Unknown calling convention '{}' for function '{}'".format(
@@ -530,6 +534,7 @@ class LibraryLoader(object):
             return getattr(self.access[calling_convention], name)
 
         def has(self, name, calling_convention="cdecl"):
+            """Return True if this given calling convention finds the given 'name'"""
             if calling_convention not in self.access:
                 return False
             return hasattr(self.access[calling_convention], name)
@@ -545,9 +550,10 @@ class LibraryLoader(object):
         paths = self.getpaths(libname)
 
         for path in paths:
+            # noinspection PyBroadException
             try:
                 return self.Lookup(path)
-            except BaseException:
+            except Exception:  # pylint: disable=broad-except
                 pass
 
         raise ImportError("Could not load %s." % libname)
@@ -565,10 +571,17 @@ class LibraryLoader(object):
                     # dir_i should be absolute already
                     yield os.path.join(dir_i, fmt % libname)
 
+            # check if this code is even stored in a physical file
+            try:
+                this_file = __file__
+            except NameError:
+                this_file = None
+
             # then we search the directory where the generated python interface
             # is stored
-            for fmt in self.name_formats:
-                yield os.path.abspath(os.path.join(os.path.dirname(__file__), fmt % libname))
+            if this_file is not None:
+                for fmt in self.name_formats:
+                    yield os.path.abspath(os.path.join(os.path.dirname(__file__), fmt % libname))
 
             # now, use the ctypes tools to try to find the library
             for fmt in self.name_formats:
@@ -585,7 +598,8 @@ class LibraryLoader(object):
             for fmt in self.name_formats:
                 yield os.path.abspath(os.path.join(os.path.curdir, fmt % libname))
 
-    def getplatformpaths(self, libname):
+    def getplatformpaths(self, _libname):  # pylint: disable=no-self-use
+        """Return all the library paths available in this platform"""
         return []
 
 
@@ -593,6 +607,8 @@ class LibraryLoader(object):
 
 
 class DarwinLibraryLoader(LibraryLoader):
+    """Library loader for MacOS"""
+
     name_formats = [
         "lib%s.dylib",
         "lib%s.so",
@@ -604,6 +620,10 @@ class DarwinLibraryLoader(LibraryLoader):
     ]
 
     class Lookup(LibraryLoader.Lookup):
+        """
+        Looking up library files for this platform (Darwin aka MacOS)
+        """
+
         # Darwin requires dlopen to be called with mode RTLD_GLOBAL instead
         # of the default RTLD_LOCAL.  Without this, you end up with
         # libraries not being loadable, resulting in "Symbol not found"
@@ -614,13 +634,14 @@ class DarwinLibraryLoader(LibraryLoader):
         if os.path.pathsep in libname:
             names = [libname]
         else:
-            names = [format % libname for format in self.name_formats]
+            names = [fmt % libname for fmt in self.name_formats]
 
-        for dir in self.getdirs(libname):
+        for directory in self.getdirs(libname):
             for name in names:
-                yield os.path.join(dir, name)
+                yield os.path.join(directory, name)
 
-    def getdirs(self, libname):
+    @staticmethod
+    def getdirs(libname):
         """Implements the dylib search as specified in Apple documentation:
 
         http://developer.apple.com/documentation/DeveloperTools/Conceptual/
@@ -635,7 +656,10 @@ class DarwinLibraryLoader(LibraryLoader):
             "DYLD_FALLBACK_LIBRARY_PATH")
         if not dyld_fallback_library_path:
             dyld_fallback_library_path = [
-                os.path.expanduser("~/lib"), "/usr/local/lib", "/usr/lib"]
+                os.path.expanduser("~/lib"),
+                "/usr/local/lib",
+                "/usr/lib",
+            ]
 
         dirs = []
 
@@ -644,8 +668,9 @@ class DarwinLibraryLoader(LibraryLoader):
         else:
             dirs.extend(_environ_path("LD_LIBRARY_PATH"))
             dirs.extend(_environ_path("DYLD_LIBRARY_PATH"))
+            dirs.extend(_environ_path("LD_RUN_PATH"))
 
-        if hasattr(sys, "frozen") and sys.frozen == "macosx_app":
+        if hasattr(sys, "frozen") and getattr(sys, "frozen") == "macosx_app":
             dirs.append(
                 os.path.join(
                     os.environ["RESOURCEPATH"],
@@ -661,50 +686,60 @@ class DarwinLibraryLoader(LibraryLoader):
 
 
 class PosixLibraryLoader(LibraryLoader):
+    """Library loader for POSIX-like systems (including Linux)"""
+
     _ld_so_cache = None
 
     _include = re.compile(r"^\s*include\s+(?P<pattern>.*)")
 
+    name_formats = ["lib%s.so", "%s.so", "%s"]
+
     class _Directories(dict):
+        """Deal with directories"""
+
         def __init__(self):
+            dict.__init__(self)
             self.order = 0
 
         def add(self, directory):
+            """Add a directory to our current set of directories"""
             if len(directory) > 1:
                 directory = directory.rstrip(os.path.sep)
             # only adds and updates order if exists and not already in set
             if not os.path.exists(directory):
                 return
-            o = self.setdefault(directory, self.order)
-            if o == self.order:
+            order = self.setdefault(directory, self.order)
+            if order == self.order:
                 self.order += 1
 
         def extend(self, directories):
-            for d in directories:
-                self.add(d)
+            """Add a list of directories to our set"""
+            for a_dir in directories:
+                self.add(a_dir)
 
         def ordered(self):
-            return (i[0] for i in sorted(self.items(), key=lambda D: D[1]))
+            """Sort the list of directories"""
+            return (i[0] for i in sorted(self.items(), key=lambda d: d[1]))
 
     def _get_ld_so_conf_dirs(self, conf, dirs):
         """
-        Recursive funtion to help parse all ld.so.conf files, including proper
+        Recursive function to help parse all ld.so.conf files, including proper
         handling of the `include` directive.
         """
 
         try:
-            with open(conf) as f:
-                for D in f:
-                    D = D.strip()
-                    if not D:
+            with open(conf) as fileobj:
+                for dirname in fileobj:
+                    dirname = dirname.strip()
+                    if not dirname:
                         continue
 
-                    m = self._include.match(D)
-                    if not m:
-                        dirs.add(D)
+                    match = self._include.match(dirname)
+                    if not match:
+                        dirs.add(dirname)
                     else:
-                        for D2 in glob.glob(m.group("pattern")):
-                            self._get_ld_so_conf_dirs(D2, dirs)
+                        for dir2 in glob.glob(match.group("pattern")):
+                            self._get_ld_so_conf_dirs(dir2, dirs)
         except IOError:
             pass
 
@@ -719,7 +754,7 @@ class PosixLibraryLoader(LibraryLoader):
         directories = self._Directories()
         for name in (
             "LD_LIBRARY_PATH",
-            "SHLIB_PATH",  # HPUX
+            "SHLIB_PATH",  # HP-UX
             "LIBPATH",  # OS/2, AIX
             "LIBRARY_PATH",  # BE/OS
         ):
@@ -746,9 +781,11 @@ class PosixLibraryLoader(LibraryLoader):
                 unix_lib_dirs_list += ["/lib/i386-linux-gnu",
                                        "/usr/lib/i386-linux-gnu"]
             elif bitage.startswith("64"):
-                # Assume Intel/AMD x86 compat
-                unix_lib_dirs_list += ["/lib/x86_64-linux-gnu",
-                                       "/usr/lib/x86_64-linux-gnu"]
+                # Assume Intel/AMD x86 compatible
+                unix_lib_dirs_list += [
+                    "/lib/x86_64-linux-gnu",
+                    "/usr/lib/x86_64-linux-gnu",
+                ]
             else:
                 # guess...
                 unix_lib_dirs_list += glob.glob("/lib/*linux-gnu")
@@ -756,10 +793,10 @@ class PosixLibraryLoader(LibraryLoader):
 
         cache = {}
         lib_re = re.compile(r"lib(.*)\.s[ol]")
-        ext_re = re.compile(r"\.s[ol]$")
-        for dir in directories.ordered():
+        # ext_re = re.compile(r"\.s[ol]$")
+        for our_dir in directories.ordered():
             try:
-                for path in glob.glob("%s/*.s[ol]*" % dir):
+                for path in glob.glob("%s/*.s[ol]*" % our_dir):
                     file = os.path.basename(path)
 
                     # Index by filename
@@ -793,9 +830,13 @@ class PosixLibraryLoader(LibraryLoader):
 
 
 class WindowsLibraryLoader(LibraryLoader):
+    """Library loader for Microsoft Windows"""
+
     name_formats = ["%s.dll", "lib%s.dll", "%slib.dll", "%s"]
 
     class Lookup(LibraryLoader.Lookup):
+        """Lookup class for Windows libraries..."""
+
         def __init__(self, path):
             super(WindowsLibraryLoader.Lookup, self).__init__(path)
             self.access["stdcall"] = ctypes.windll.LoadLibrary(path)
@@ -822,10 +863,10 @@ def add_library_search_dirs(other_dirs):
     If library paths are relative, convert them to absolute with respect to this
     file's directory
     """
-    for F in other_dirs:
-        if not os.path.isabs(F):
-            F = os.path.abspath(F)
-        load_library.other_dirs.append(F)
+    for path in other_dirs:
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        load_library.other_dirs.append(path)
 
 
 del loaderclass
@@ -843,9 +884,25 @@ _libs["libdpu.so"] = load_library("libdpu.so")
 
 # No modules
 
+__uint8_t = c_ubyte  # /usr/include/x86_64-linux-gnu/bits/types.h: 37
+
+__uint16_t = c_ushort  # /usr/include/x86_64-linux-gnu/bits/types.h: 39
+
+__uint32_t = c_uint  # /usr/include/x86_64-linux-gnu/bits/types.h: 41
+
+__uint64_t = c_ulong  # /usr/include/x86_64-linux-gnu/bits/types.h: 44
+
 __off_t = c_long  # /usr/include/x86_64-linux-gnu/bits/types.h: 150
 
 __off64_t = c_long  # /usr/include/x86_64-linux-gnu/bits/types.h: 151
+
+uint8_t = __uint8_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 24
+
+uint16_t = __uint16_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 25
+
+uint32_t = __uint32_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 26
+
+uint64_t = __uint64_t  # /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 27
 
 # /usr/include/x86_64-linux-gnu/bits/types/struct_FILE.h: 49
 
@@ -940,164 +997,182 @@ struct__IO_FILE._fields_ = [
     ('_unused2', c_char * int((((15 * sizeof(c_int)) - (4 * sizeof(POINTER(None)))) - sizeof(c_size_t)))),
 ]
 
-enum_dpu_error_t = c_int  # dpu_error.h: 92
+enum_dpu_error_t = c_int  # dpu_error.h: 103
 
-DPU_OK = 0  # dpu_error.h: 92
+DPU_OK = 0  # dpu_error.h: 103
 
-DPU_ERR_INTERNAL = (DPU_OK + 1)  # dpu_error.h: 92
+DPU_ERR_INTERNAL = (DPU_OK + 1)  # dpu_error.h: 103
 
-DPU_ERR_SYSTEM = (DPU_ERR_INTERNAL + 1)  # dpu_error.h: 92
+DPU_ERR_SYSTEM = (DPU_ERR_INTERNAL + 1)  # dpu_error.h: 103
 
-DPU_ERR_DRIVER = (DPU_ERR_SYSTEM + 1)  # dpu_error.h: 92
+DPU_ERR_DRIVER = (DPU_ERR_SYSTEM + 1)  # dpu_error.h: 103
 
-DPU_ERR_ALLOCATION = (DPU_ERR_DRIVER + 1)  # dpu_error.h: 92
+DPU_ERR_ALLOCATION = (DPU_ERR_DRIVER + 1)  # dpu_error.h: 103
 
-DPU_ERR_INVALID_DPU_SET = (DPU_ERR_ALLOCATION + 1)  # dpu_error.h: 92
+DPU_ERR_INVALID_DPU_SET = (DPU_ERR_ALLOCATION + 1)  # dpu_error.h: 103
 
-DPU_ERR_INVALID_THREAD_ID = (DPU_ERR_INVALID_DPU_SET + 1)  # dpu_error.h: 92
+DPU_ERR_INVALID_THREAD_ID = (DPU_ERR_INVALID_DPU_SET + 1)  # dpu_error.h: 103
 
-DPU_ERR_INVALID_NOTIFY_ID = (DPU_ERR_INVALID_THREAD_ID + 1)  # dpu_error.h: 92
+DPU_ERR_INVALID_NOTIFY_ID = (DPU_ERR_INVALID_THREAD_ID + 1)  # dpu_error.h: 103
 
 DPU_ERR_INVALID_WRAM_ACCESS = (
     DPU_ERR_INVALID_NOTIFY_ID +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_INVALID_IRAM_ACCESS = (
     DPU_ERR_INVALID_WRAM_ACCESS +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_INVALID_MRAM_ACCESS = (
     DPU_ERR_INVALID_IRAM_ACCESS +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_INVALID_SYMBOL_ACCESS = (
     DPU_ERR_INVALID_MRAM_ACCESS +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
-DPU_ERR_MRAM_BUSY = (DPU_ERR_INVALID_SYMBOL_ACCESS + 1)  # dpu_error.h: 92
+DPU_ERR_MRAM_BUSY = (DPU_ERR_INVALID_SYMBOL_ACCESS + 1)  # dpu_error.h: 103
 
-DPU_ERR_TRANSFER_ALREADY_SET = (DPU_ERR_MRAM_BUSY + 1)  # dpu_error.h: 92
+DPU_ERR_TRANSFER_ALREADY_SET = (DPU_ERR_MRAM_BUSY + 1)  # dpu_error.h: 103
 
 DPU_ERR_NO_PROGRAM_LOADED = (
     DPU_ERR_TRANSFER_ALREADY_SET +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_DIFFERENT_DPU_PROGRAMS = (
     DPU_ERR_NO_PROGRAM_LOADED +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_CORRUPTED_MEMORY = (
     DPU_ERR_DIFFERENT_DPU_PROGRAMS +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
-DPU_ERR_DPU_DISABLED = (DPU_ERR_CORRUPTED_MEMORY + 1)  # dpu_error.h: 92
+DPU_ERR_DPU_DISABLED = (DPU_ERR_CORRUPTED_MEMORY + 1)  # dpu_error.h: 103
 
-DPU_ERR_DPU_ALREADY_RUNNING = (DPU_ERR_DPU_DISABLED + 1)  # dpu_error.h: 92
+DPU_ERR_DPU_ALREADY_RUNNING = (DPU_ERR_DPU_DISABLED + 1)  # dpu_error.h: 103
 
 DPU_ERR_INVALID_MEMORY_TRANSFER = (
     DPU_ERR_DPU_ALREADY_RUNNING +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_INVALID_LAUNCH_POLICY = (
     DPU_ERR_INVALID_MEMORY_TRANSFER +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
-DPU_ERR_DPU_FAULT = (DPU_ERR_INVALID_LAUNCH_POLICY + 1)  # dpu_error.h: 92
+DPU_ERR_DPU_FAULT = (DPU_ERR_INVALID_LAUNCH_POLICY + 1)  # dpu_error.h: 103
 
-DPU_ERR_ELF_INVALID_FILE = (DPU_ERR_DPU_FAULT + 1)  # dpu_error.h: 92
+DPU_ERR_ELF_INVALID_FILE = (DPU_ERR_DPU_FAULT + 1)  # dpu_error.h: 103
 
-DPU_ERR_ELF_NO_SUCH_FILE = (DPU_ERR_ELF_INVALID_FILE + 1)  # dpu_error.h: 92
+DPU_ERR_ELF_NO_SUCH_FILE = (DPU_ERR_ELF_INVALID_FILE + 1)  # dpu_error.h: 103
 
-DPU_ERR_ELF_NO_SUCH_SECTION = (DPU_ERR_ELF_NO_SUCH_FILE + 1)  # dpu_error.h: 92
+DPU_ERR_ELF_NO_SUCH_SECTION = (
+    DPU_ERR_ELF_NO_SUCH_FILE +
+    1)  # dpu_error.h: 103
 
-DPU_ERR_TIMEOUT = (DPU_ERR_ELF_NO_SUCH_SECTION + 1)  # dpu_error.h: 92
+DPU_ERR_TIMEOUT = (DPU_ERR_ELF_NO_SUCH_SECTION + 1)  # dpu_error.h: 103
 
-DPU_ERR_INVALID_PROFILE = (DPU_ERR_TIMEOUT + 1)  # dpu_error.h: 92
+DPU_ERR_INVALID_PROFILE = (DPU_ERR_TIMEOUT + 1)  # dpu_error.h: 103
 
-DPU_ERR_UNKNOWN_SYMBOL = (DPU_ERR_INVALID_PROFILE + 1)  # dpu_error.h: 92
+DPU_ERR_UNKNOWN_SYMBOL = (DPU_ERR_INVALID_PROFILE + 1)  # dpu_error.h: 103
 
-DPU_ERR_LOG_FORMAT = (DPU_ERR_UNKNOWN_SYMBOL + 1)  # dpu_error.h: 92
+DPU_ERR_LOG_FORMAT = (DPU_ERR_UNKNOWN_SYMBOL + 1)  # dpu_error.h: 103
 
-DPU_ERR_LOG_CONTEXT_MISSING = (DPU_ERR_LOG_FORMAT + 1)  # dpu_error.h: 92
+DPU_ERR_LOG_CONTEXT_MISSING = (DPU_ERR_LOG_FORMAT + 1)  # dpu_error.h: 103
 
 DPU_ERR_LOG_BUFFER_TOO_SMALL = (
     DPU_ERR_LOG_CONTEXT_MISSING +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_VPD_INVALID_FILE = (
     DPU_ERR_LOG_BUFFER_TOO_SMALL +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
-DPU_ERR_VPD_NO_REPAIR = (DPU_ERR_VPD_INVALID_FILE + 1)  # dpu_error.h: 92
+DPU_ERR_VPD_NO_REPAIR = (DPU_ERR_VPD_INVALID_FILE + 1)  # dpu_error.h: 103
 
-DPU_ERR_NO_THREAD_PER_RANK = (DPU_ERR_VPD_NO_REPAIR + 1)  # dpu_error.h: 92
+DPU_ERR_NO_THREAD_PER_RANK = (DPU_ERR_VPD_NO_REPAIR + 1)  # dpu_error.h: 103
 
 DPU_ERR_INVALID_BUFFER_SIZE = (
     DPU_ERR_NO_THREAD_PER_RANK +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
 DPU_ERR_NONBLOCKING_SYNC_CALLBACK = (
     DPU_ERR_INVALID_BUFFER_SIZE +
-    1)  # dpu_error.h: 92
+    1)  # dpu_error.h: 103
 
-DPU_ERR_ASYNC_JOBS = (1 << 31)  # dpu_error.h: 92
+DPU_ERR_TOO_MANY_TASKLETS = (
+    DPU_ERR_NONBLOCKING_SYNC_CALLBACK +
+    1)  # dpu_error.h: 103
 
-dpu_error_t = enum_dpu_error_t  # dpu_error.h: 92
+DPU_ERR_SG_TOO_MANY_BLOCKS = (
+    DPU_ERR_TOO_MANY_TASKLETS +
+    1)  # dpu_error.h: 103
 
-# dpu_error.h: 100
+DPU_ERR_SG_LENGTH_MISMATCH = (
+    DPU_ERR_SG_TOO_MANY_BLOCKS +
+    1)  # dpu_error.h: 103
+
+DPU_ERR_SG_NOT_ACTIVATED = (DPU_ERR_SG_LENGTH_MISMATCH + 1)  # dpu_error.h: 103
+
+DPU_ERR_SG_NOT_MRAM_SYMBOL = (DPU_ERR_SG_NOT_ACTIVATED + 1)  # dpu_error.h: 103
+
+DPU_ERR_ASYNC_JOBS = (1 << 31)  # dpu_error.h: 103
+
+dpu_error_t = enum_dpu_error_t  # dpu_error.h: 103
+
+# dpu_error.h: 111
 if _libs["libdpu.so"].has("dpu_error_to_string", "cdecl"):
     dpu_error_to_string = _libs["libdpu.so"].get(
         "dpu_error_to_string", "cdecl")
     dpu_error_to_string.argtypes = [dpu_error_t]
     dpu_error_to_string.restype = c_char_p
 
-dpu_rank_id_t = c_uint16  # dpu_types.h: 41
+dpu_rank_id_t = uint16_t  # dpu_types.h: 41
 
-dpu_id_t = c_uint32  # dpu_types.h: 46
+dpu_id_t = uint32_t  # dpu_types.h: 46
 
-dpu_slice_id_t = c_uint8  # dpu_types.h: 51
+dpu_slice_id_t = uint8_t  # dpu_types.h: 51
 
-dpu_member_id_t = c_uint8  # dpu_types.h: 56
+dpu_member_id_t = uint8_t  # dpu_types.h: 56
 
-dpu_group_id_t = c_uint8  # dpu_types.h: 61
+dpu_group_id_t = uint8_t  # dpu_types.h: 61
 
-dpu_thread_t = c_uint8  # dpu_types.h: 66
+dpu_thread_t = uint8_t  # dpu_types.h: 66
 
-dpu_notify_bit_id_t = c_uint8  # dpu_types.h: 71
+dpu_notify_bit_id_t = uint8_t  # dpu_types.h: 71
 
-iram_addr_t = c_uint16  # dpu_types.h: 76
+iram_addr_t = uint16_t  # dpu_types.h: 76
 
-wram_addr_t = c_uint32  # dpu_types.h: 81
+wram_addr_t = uint32_t  # dpu_types.h: 81
 
-mram_addr_t = c_uint32  # dpu_types.h: 86
+mram_addr_t = uint32_t  # dpu_types.h: 86
 
 dpu_mem_max_addr_t = mram_addr_t  # dpu_types.h: 91
 
-iram_size_t = c_uint16  # dpu_types.h: 96
+iram_size_t = uint16_t  # dpu_types.h: 96
 
-wram_size_t = c_uint32  # dpu_types.h: 101
+wram_size_t = uint32_t  # dpu_types.h: 101
 
-mram_size_t = c_uint32  # dpu_types.h: 106
+mram_size_t = uint32_t  # dpu_types.h: 106
 
 dpu_mem_max_size_t = mram_size_t  # dpu_types.h: 111
 
-dpuinstruction_t = c_uint64  # dpu_types.h: 116
+dpuinstruction_t = uint64_t  # dpu_types.h: 116
 
-dpuword_t = c_uint32  # dpu_types.h: 121
+dpuword_t = uint32_t  # dpu_types.h: 121
 
-dpu_bitfield_t = c_uint8  # dpu_types.h: 126
+dpu_bitfield_t = uint8_t  # dpu_types.h: 126
 
-dpu_ci_bitfield_t = c_uint8  # dpu_types.h: 137
+dpu_ci_bitfield_t = uint8_t  # dpu_types.h: 137
 
 enum__dpu_clock_division_t = c_int  # dpu_types.h: 147
 
-DPU_CLOCK_DIV8 = 0  # dpu_types.h: 147
+DPU_CLOCK_DIV8 = 0x0  # dpu_types.h: 147
 
-DPU_CLOCK_DIV4 = 4  # dpu_types.h: 147
+DPU_CLOCK_DIV4 = 0x4  # dpu_types.h: 147
 
-DPU_CLOCK_DIV3 = 3  # dpu_types.h: 147
+DPU_CLOCK_DIV3 = 0x3  # dpu_types.h: 147
 
-DPU_CLOCK_DIV2 = 8  # dpu_types.h: 147
+DPU_CLOCK_DIV2 = 0x8  # dpu_types.h: 147
 
 dpu_clock_division_t = enum__dpu_clock_division_t  # dpu_types.h: 147
 
@@ -1219,7 +1294,7 @@ struct_anon_24.__slots__ = [
     'ranks',
 ]
 struct_anon_24._fields_ = [
-    ('nr_ranks', c_uint32),
+    ('nr_ranks', uint32_t),
     ('ranks', POINTER(POINTER(struct_dpu_rank_t))),
 ]
 
@@ -1293,7 +1368,7 @@ struct_dpu_incbin_t.__slots__ = [
     'path',
 ]
 struct_dpu_incbin_t._fields_ = [
-    ('buffer', POINTER(c_uint8)),
+    ('buffer', POINTER(uint8_t)),
     ('size', c_size_t),
     ('path', String),
 ]
@@ -1312,10 +1387,10 @@ struct_dpu_bit_config.__slots__ = [
     'stutter',
 ]
 struct_dpu_bit_config._fields_ = [
-    ('cpu2dpu', c_uint16),
-    ('dpu2cpu', c_uint16),
-    ('nibble_swap', c_uint8),
-    ('stutter', c_uint8),
+    ('cpu2dpu', uint16_t),
+    ('dpu2cpu', uint16_t),
+    ('nibble_swap', uint8_t),
+    ('stutter', uint8_t),
 ]
 
 # dpu_types.h: 302
@@ -1332,10 +1407,10 @@ struct_dpu_carousel_config.__slots__ = [
     'res_sampling',
 ]
 struct_dpu_carousel_config._fields_ = [
-    ('cmd_duration', c_uint8),
-    ('cmd_sampling', c_uint8),
-    ('res_duration', c_uint8),
-    ('res_sampling', c_uint8),
+    ('cmd_duration', uint8_t),
+    ('cmd_sampling', uint8_t),
+    ('res_duration', uint8_t),
+    ('res_sampling', uint8_t),
 ]
 
 # dpu_types.h: 316
@@ -1356,14 +1431,14 @@ struct_dpu_repair_config.__slots__ = [
     'odd_index',
 ]
 struct_dpu_repair_config._fields_ = [
-    ('AB_msbs', c_uint8),
-    ('CD_msbs', c_uint8),
-    ('A_lsbs', c_uint8),
-    ('B_lsbs', c_uint8),
-    ('C_lsbs', c_uint8),
-    ('D_lsbs', c_uint8),
-    ('even_index', c_uint8),
-    ('odd_index', c_uint8),
+    ('AB_msbs', uint8_t),
+    ('CD_msbs', uint8_t),
+    ('A_lsbs', uint8_t),
+    ('B_lsbs', uint8_t),
+    ('C_lsbs', uint8_t),
+    ('D_lsbs', uint8_t),
+    ('even_index', uint8_t),
+    ('odd_index', uint8_t),
 ]
 
 enum_dpu_temperature = c_int  # dpu_types.h: 338
@@ -1412,9 +1487,9 @@ struct_anon_26.__slots__ = [
     'wram_size',
 ]
 struct_anon_26._fields_ = [
-    ('nr_threads', c_uint32),
-    ('nr_registers', c_uint32),
-    ('nr_atomic_bits', c_uint32),
+    ('nr_threads', uint32_t),
+    ('nr_registers', uint32_t),
+    ('nr_atomic_bits', uint32_t),
     ('iram_size', iram_size_t),
     ('mram_size', mram_size_t),
     ('wram_size', wram_size_t),
@@ -1450,35 +1525,63 @@ struct_dpu_context_t.__slots__ = [
 struct_dpu_context_t._fields_ = [
     ('info', struct_anon_26),
     ('iram', POINTER(dpuinstruction_t)),
-    ('mram', POINTER(c_uint8)),
+    ('mram', POINTER(uint8_t)),
     ('wram', POINTER(dpuword_t)),
-    ('registers', POINTER(c_uint32)),
+    ('registers', POINTER(uint32_t)),
     ('pcs', POINTER(iram_addr_t)),
     ('atomic_register', POINTER(c_bool)),
     ('zero_flags', POINTER(c_bool)),
     ('carry_flags', POINTER(c_bool)),
-    ('nr_of_running_threads', c_uint8),
-    ('scheduling', POINTER(c_uint8)),
+    ('nr_of_running_threads', uint8_t),
+    ('scheduling', POINTER(uint8_t)),
     ('bkp_fault', c_bool),
     ('dma_fault', c_bool),
     ('mem_fault', c_bool),
     ('bkp_fault_thread_index', dpu_thread_t),
     ('dma_fault_thread_index', dpu_thread_t),
     ('mem_fault_thread_index', dpu_thread_t),
-    ('bkp_fault_id', c_uint32),
+    ('bkp_fault_id', uint32_t),
 ]
+
+# dpu_types.h: 426
+
+
+class struct_sg_xfer_buffer(Structure):
+    pass
+
+
+struct_sg_xfer_buffer.__slots__ = [
+    'max_nr_blocks',
+    'blocks_addr',
+    'blocks_length',
+    'nr_blocks',
+]
+struct_sg_xfer_buffer._fields_ = [
+    ('max_nr_blocks', uint32_t),
+    ('blocks_addr', POINTER(POINTER(uint8_t))),
+    ('blocks_length', POINTER(uint32_t)),
+    ('nr_blocks', uint32_t),
+]
+
+enum_dpu_transfer_matrix_type_t = c_int  # dpu_types.h: 445
+
+DPU_DEFAULT_XFER_MATRIX = 0  # dpu_types.h: 445
+
+DPU_SG_XFER_MATRIX = (DPU_DEFAULT_XFER_MATRIX + 1)  # dpu_types.h: 445
+
+dpu_transfer_matrix_type_t = enum_dpu_transfer_matrix_type_t  # dpu_types.h: 445
 
 enum__dpu_checkpoint_flags_t = c_int  # dpu_checkpoint.h: 30
 
-DPU_CHECKPOINT_NONE = 0  # dpu_checkpoint.h: 30
+DPU_CHECKPOINT_NONE = 0x0  # dpu_checkpoint.h: 30
 
-DPU_CHECKPOINT_INTERNAL = 1  # dpu_checkpoint.h: 30
+DPU_CHECKPOINT_INTERNAL = 0x1  # dpu_checkpoint.h: 30
 
-DPU_CHECKPOINT_IRAM = 2  # dpu_checkpoint.h: 30
+DPU_CHECKPOINT_IRAM = 0x2  # dpu_checkpoint.h: 30
 
-DPU_CHECKPOINT_MRAM = 8  # dpu_checkpoint.h: 30
+DPU_CHECKPOINT_MRAM = 0x8  # dpu_checkpoint.h: 30
 
-DPU_CHECKPOINT_WRAM = 16  # dpu_checkpoint.h: 30
+DPU_CHECKPOINT_WRAM = 0x10  # dpu_checkpoint.h: 30
 
 dpu_checkpoint_flags_t = enum__dpu_checkpoint_flags_t  # dpu_checkpoint.h: 30
 
@@ -1510,7 +1613,7 @@ if _libs["libdpu.so"].has(
         "dpu_checkpoint_get_serialized_context_size", "cdecl")
     dpu_checkpoint_get_serialized_context_size.argtypes = [
         POINTER(struct_dpu_context_t)]
-    dpu_checkpoint_get_serialized_context_size.restype = c_uint32
+    dpu_checkpoint_get_serialized_context_size.restype = uint32_t
 
 # dpu_checkpoint.h: 74
 if _libs["libdpu.so"].has("dpu_checkpoint_serialize", "cdecl"):
@@ -1518,7 +1621,7 @@ if _libs["libdpu.so"].has("dpu_checkpoint_serialize", "cdecl"):
         "dpu_checkpoint_serialize", "cdecl")
     dpu_checkpoint_serialize.argtypes = [
         POINTER(struct_dpu_context_t), POINTER(
-            POINTER(c_uint8)), POINTER(c_uint32)]
+            POINTER(uint8_t)), POINTER(uint32_t)]
     dpu_checkpoint_serialize.restype = dpu_error_t
 
 # dpu_checkpoint.h: 84
@@ -1526,7 +1629,7 @@ if _libs["libdpu.so"].has("dpu_checkpoint_deserialize", "cdecl"):
     dpu_checkpoint_deserialize = _libs["libdpu.so"].get(
         "dpu_checkpoint_deserialize", "cdecl")
     dpu_checkpoint_deserialize.argtypes = [
-        POINTER(c_uint8), c_uint32, POINTER(struct_dpu_context_t)]
+        POINTER(uint8_t), uint32_t, POINTER(struct_dpu_context_t)]
     dpu_checkpoint_deserialize.restype = dpu_error_t
 
 # dpu_checkpoint.h: 92
@@ -1562,49 +1665,59 @@ DPU_XFER_ASYNC = (1 << 1)  # dpu.h: 82
 
 dpu_xfer_flags_t = enum__dpu_xfer_flags_t  # dpu.h: 82
 
-enum__dpu_callback_flags_t = c_int  # dpu.h: 102
+enum__dpu_sg_xfer_flags_t = c_int  # dpu.h: 102
 
-DPU_CALLBACK_DEFAULT = 0  # dpu.h: 102
+DPU_SG_XFER_DEFAULT = 0  # dpu.h: 102
 
-DPU_CALLBACK_ASYNC = (1 << 0)  # dpu.h: 102
+DPU_SG_XFER_ASYNC = (1 << 1)  # dpu.h: 102
 
-DPU_CALLBACK_NONBLOCKING = (1 << 1)  # dpu.h: 102
+DPU_SG_XFER_DISABLE_LENGTH_CHECK = (1 << 2)  # dpu.h: 102
 
-DPU_CALLBACK_SINGLE_CALL = (1 << 2)  # dpu.h: 102
+dpu_sg_xfer_flags_t = enum__dpu_sg_xfer_flags_t  # dpu.h: 102
 
-dpu_callback_flags_t = enum__dpu_callback_flags_t  # dpu.h: 102
+enum__dpu_callback_flags_t = c_int  # dpu.h: 122
 
-# dpu.h: 144
+DPU_CALLBACK_DEFAULT = 0  # dpu.h: 122
+
+DPU_CALLBACK_ASYNC = (1 << 0)  # dpu.h: 122
+
+DPU_CALLBACK_NONBLOCKING = (1 << 1)  # dpu.h: 122
+
+DPU_CALLBACK_SINGLE_CALL = (1 << 2)  # dpu.h: 122
+
+dpu_callback_flags_t = enum__dpu_callback_flags_t  # dpu.h: 122
+
+# dpu.h: 164
 if _libs["libdpu.so"].has("dpu_alloc", "cdecl"):
     dpu_alloc = _libs["libdpu.so"].get("dpu_alloc", "cdecl")
-    dpu_alloc.argtypes = [c_uint32, String, POINTER(struct_dpu_set_t)]
+    dpu_alloc.argtypes = [uint32_t, String, POINTER(struct_dpu_set_t)]
     dpu_alloc.restype = dpu_error_t
 
-# dpu.h: 158
+# dpu.h: 178
 if _libs["libdpu.so"].has("dpu_alloc_ranks", "cdecl"):
     dpu_alloc_ranks = _libs["libdpu.so"].get("dpu_alloc_ranks", "cdecl")
-    dpu_alloc_ranks.argtypes = [c_uint32, String, POINTER(struct_dpu_set_t)]
+    dpu_alloc_ranks.argtypes = [uint32_t, String, POINTER(struct_dpu_set_t)]
     dpu_alloc_ranks.restype = dpu_error_t
 
-# dpu.h: 169
+# dpu.h: 189
 if _libs["libdpu.so"].has("dpu_free", "cdecl"):
     dpu_free = _libs["libdpu.so"].get("dpu_free", "cdecl")
     dpu_free.argtypes = [struct_dpu_set_t]
     dpu_free.restype = dpu_error_t
 
-# dpu.h: 178
+# dpu.h: 198
 if _libs["libdpu.so"].has("dpu_get_nr_ranks", "cdecl"):
     dpu_get_nr_ranks = _libs["libdpu.so"].get("dpu_get_nr_ranks", "cdecl")
-    dpu_get_nr_ranks.argtypes = [struct_dpu_set_t, POINTER(c_uint32)]
+    dpu_get_nr_ranks.argtypes = [struct_dpu_set_t, POINTER(uint32_t)]
     dpu_get_nr_ranks.restype = dpu_error_t
 
-# dpu.h: 187
+# dpu.h: 207
 if _libs["libdpu.so"].has("dpu_get_nr_dpus", "cdecl"):
     dpu_get_nr_dpus = _libs["libdpu.so"].get("dpu_get_nr_dpus", "cdecl")
-    dpu_get_nr_dpus.argtypes = [struct_dpu_set_t, POINTER(c_uint32)]
+    dpu_get_nr_dpus.argtypes = [struct_dpu_set_t, POINTER(uint32_t)]
     dpu_get_nr_dpus.restype = dpu_error_t
 
-# dpu.h: 250
+# dpu.h: 270
 
 
 class struct_dpu_set_rank_iterator_t(Structure):
@@ -1620,13 +1733,13 @@ struct_dpu_set_rank_iterator_t.__slots__ = [
 ]
 struct_dpu_set_rank_iterator_t._fields_ = [
     ('set', POINTER(struct_dpu_set_t)),
-    ('count', c_uint32),
-    ('next_idx', c_uint32),
+    ('count', uint32_t),
+    ('next_idx', uint32_t),
     ('has_next', c_bool),
     ('next', struct_dpu_set_t),
 ]
 
-# dpu.h: 264
+# dpu.h: 284
 
 
 class struct_dpu_set_dpu_iterator_t(Structure):
@@ -1642,20 +1755,20 @@ struct_dpu_set_dpu_iterator_t.__slots__ = [
 ]
 struct_dpu_set_dpu_iterator_t._fields_ = [
     ('rank_iterator', struct_dpu_set_rank_iterator_t),
-    ('count', c_uint32),
-    ('next_idx', c_uint32),
+    ('count', uint32_t),
+    ('next_idx', uint32_t),
     ('has_next', c_bool),
     ('next', struct_dpu_set_t),
 ]
 
-# dpu.h: 282
+# dpu.h: 302
 if _libs["libdpu.so"].has("dpu_set_rank_iterator_from", "cdecl"):
     dpu_set_rank_iterator_from = _libs["libdpu.so"].get(
         "dpu_set_rank_iterator_from", "cdecl")
     dpu_set_rank_iterator_from.argtypes = [POINTER(struct_dpu_set_t)]
     dpu_set_rank_iterator_from.restype = struct_dpu_set_rank_iterator_t
 
-# dpu.h: 293
+# dpu.h: 313
 if _libs["libdpu.so"].has("dpu_set_rank_iterator_next", "cdecl"):
     dpu_set_rank_iterator_next = _libs["libdpu.so"].get(
         "dpu_set_rank_iterator_next", "cdecl")
@@ -1663,14 +1776,14 @@ if _libs["libdpu.so"].has("dpu_set_rank_iterator_next", "cdecl"):
         POINTER(struct_dpu_set_rank_iterator_t)]
     dpu_set_rank_iterator_next.restype = None
 
-# dpu.h: 305
+# dpu.h: 325
 if _libs["libdpu.so"].has("dpu_set_dpu_iterator_from", "cdecl"):
     dpu_set_dpu_iterator_from = _libs["libdpu.so"].get(
         "dpu_set_dpu_iterator_from", "cdecl")
     dpu_set_dpu_iterator_from.argtypes = [POINTER(struct_dpu_set_t)]
     dpu_set_dpu_iterator_from.restype = struct_dpu_set_dpu_iterator_t
 
-# dpu.h: 316
+# dpu.h: 336
 if _libs["libdpu.so"].has("dpu_set_dpu_iterator_next", "cdecl"):
     dpu_set_dpu_iterator_next = _libs["libdpu.so"].get(
         "dpu_set_dpu_iterator_next", "cdecl")
@@ -1678,16 +1791,16 @@ if _libs["libdpu.so"].has("dpu_set_dpu_iterator_next", "cdecl"):
         POINTER(struct_dpu_set_dpu_iterator_t)]
     dpu_set_dpu_iterator_next.restype = None
 
-# dpu.h: 328
+# dpu.h: 348
 if _libs["libdpu.so"].has("dpu_load_from_memory", "cdecl"):
     dpu_load_from_memory = _libs["libdpu.so"].get(
         "dpu_load_from_memory", "cdecl")
     dpu_load_from_memory.argtypes = [
-        struct_dpu_set_t, POINTER(c_uint8), c_size_t, POINTER(
+        struct_dpu_set_t, POINTER(uint8_t), c_size_t, POINTER(
             POINTER(struct_dpu_program_t))]
     dpu_load_from_memory.restype = dpu_error_t
 
-# dpu.h: 339
+# dpu.h: 359
 if _libs["libdpu.so"].has("dpu_load_from_incbin", "cdecl"):
     dpu_load_from_incbin = _libs["libdpu.so"].get(
         "dpu_load_from_incbin", "cdecl")
@@ -1696,7 +1809,7 @@ if _libs["libdpu.so"].has("dpu_load_from_incbin", "cdecl"):
             POINTER(struct_dpu_program_t))]
     dpu_load_from_incbin.restype = dpu_error_t
 
-# dpu.h: 350
+# dpu.h: 370
 if _libs["libdpu.so"].has("dpu_load", "cdecl"):
     dpu_load = _libs["libdpu.so"].get("dpu_load", "cdecl")
     dpu_load.argtypes = [
@@ -1704,7 +1817,7 @@ if _libs["libdpu.so"].has("dpu_load", "cdecl"):
             POINTER(struct_dpu_program_t))]
     dpu_load.restype = dpu_error_t
 
-# dpu.h: 360
+# dpu.h: 380
 if _libs["libdpu.so"].has("dpu_get_symbol", "cdecl"):
     dpu_get_symbol = _libs["libdpu.so"].get("dpu_get_symbol", "cdecl")
     dpu_get_symbol.argtypes = [
@@ -1713,88 +1826,158 @@ if _libs["libdpu.so"].has("dpu_get_symbol", "cdecl"):
         POINTER(struct_dpu_symbol_t)]
     dpu_get_symbol.restype = dpu_error_t
 
-# dpu.h: 369
+# dpu.h: 389
 if _libs["libdpu.so"].has("dpu_launch", "cdecl"):
     dpu_launch = _libs["libdpu.so"].get("dpu_launch", "cdecl")
     dpu_launch.argtypes = [struct_dpu_set_t, dpu_launch_policy_t]
     dpu_launch.restype = dpu_error_t
 
-# dpu.h: 379
+# dpu.h: 399
 if _libs["libdpu.so"].has("dpu_status", "cdecl"):
     dpu_status = _libs["libdpu.so"].get("dpu_status", "cdecl")
     dpu_status.argtypes = [struct_dpu_set_t, POINTER(c_bool), POINTER(c_bool)]
     dpu_status.restype = dpu_error_t
 
-# dpu.h: 387
+# dpu.h: 407
 if _libs["libdpu.so"].has("dpu_sync", "cdecl"):
     dpu_sync = _libs["libdpu.so"].get("dpu_sync", "cdecl")
     dpu_sync.argtypes = [struct_dpu_set_t]
     dpu_sync.restype = dpu_error_t
 
-# dpu.h: 399
+# dpu.h: 419
 if _libs["libdpu.so"].has("dpu_copy_to", "cdecl"):
     dpu_copy_to = _libs["libdpu.so"].get("dpu_copy_to", "cdecl")
     dpu_copy_to.argtypes = [
         struct_dpu_set_t,
         String,
-        c_uint32,
+        uint32_t,
         POINTER(None),
         c_size_t]
     dpu_copy_to.restype = dpu_error_t
 
-# dpu.h: 411
+# dpu.h: 431
 if _libs["libdpu.so"].has("dpu_copy_from", "cdecl"):
     dpu_copy_from = _libs["libdpu.so"].get("dpu_copy_from", "cdecl")
     dpu_copy_from.argtypes = [
         struct_dpu_set_t,
         String,
-        c_uint32,
+        uint32_t,
         POINTER(None),
         c_size_t]
     dpu_copy_from.restype = dpu_error_t
 
-# dpu.h: 423
+# dpu.h: 443
 if _libs["libdpu.so"].has("dpu_copy_to_symbol", "cdecl"):
     dpu_copy_to_symbol = _libs["libdpu.so"].get("dpu_copy_to_symbol", "cdecl")
     dpu_copy_to_symbol.argtypes = [
         struct_dpu_set_t,
         struct_dpu_symbol_t,
-        c_uint32,
+        uint32_t,
         POINTER(None),
         c_size_t]
     dpu_copy_to_symbol.restype = dpu_error_t
 
-# dpu.h: 435
+# dpu.h: 455
 if _libs["libdpu.so"].has("dpu_copy_from_symbol", "cdecl"):
     dpu_copy_from_symbol = _libs["libdpu.so"].get(
         "dpu_copy_from_symbol", "cdecl")
     dpu_copy_from_symbol.argtypes = [
         struct_dpu_set_t,
         struct_dpu_symbol_t,
-        c_uint32,
+        uint32_t,
         POINTER(None),
         c_size_t]
     dpu_copy_from_symbol.restype = dpu_error_t
 
-# dpu.h: 448
+# dpu.h: 468
 if _libs["libdpu.so"].has("dpu_prepare_xfer", "cdecl"):
     dpu_prepare_xfer = _libs["libdpu.so"].get("dpu_prepare_xfer", "cdecl")
     dpu_prepare_xfer.argtypes = [struct_dpu_set_t, POINTER(None)]
     dpu_prepare_xfer.restype = dpu_error_t
 
-# dpu.h: 466
+# dpu.h: 473
+
+
+class struct_sg_block_info(Structure):
+    pass
+
+
+struct_sg_block_info.__slots__ = [
+    'addr',
+    'length',
+]
+struct_sg_block_info._fields_ = [
+    ('addr', POINTER(uint8_t)),
+    ('length', uint32_t),
+]
+
+get_block_func_t = CFUNCTYPE(
+    UNCHECKED(c_bool),
+    POINTER(struct_sg_block_info),
+    uint32_t,
+    uint32_t,
+    POINTER(None))  # dpu.h: 488
+
+# dpu.h: 501
+
+
+class struct_get_block_t(Structure):
+    pass
+
+
+struct_get_block_t.__slots__ = [
+    'f',
+    'args',
+    'args_size',
+]
+struct_get_block_t._fields_ = [
+    ('f', get_block_func_t),
+    ('args', POINTER(None)),
+    ('args_size', c_size_t),
+]
+
+get_block_t = struct_get_block_t  # dpu.h: 501
+
+# dpu.h: 522
+if _libs["libdpu.so"].has("dpu_push_sg_xfer", "cdecl"):
+    dpu_push_sg_xfer = _libs["libdpu.so"].get("dpu_push_sg_xfer", "cdecl")
+    dpu_push_sg_xfer.argtypes = [
+        struct_dpu_set_t,
+        dpu_xfer_t,
+        String,
+        uint32_t,
+        c_size_t,
+        POINTER(get_block_t),
+        dpu_sg_xfer_flags_t]
+    dpu_push_sg_xfer.restype = dpu_error_t
+
+# dpu.h: 549
+if _libs["libdpu.so"].has("dpu_push_sg_xfer_symbol", "cdecl"):
+    dpu_push_sg_xfer_symbol = _libs["libdpu.so"].get(
+        "dpu_push_sg_xfer_symbol", "cdecl")
+    dpu_push_sg_xfer_symbol.argtypes = [
+        struct_dpu_set_t,
+        dpu_xfer_t,
+        struct_dpu_symbol_t,
+        uint32_t,
+        c_size_t,
+        POINTER(get_block_t),
+        dpu_sg_xfer_flags_t]
+    dpu_push_sg_xfer_symbol.restype = dpu_error_t
+
+# dpu.h: 573
 if _libs["libdpu.so"].has("dpu_push_xfer", "cdecl"):
     dpu_push_xfer = _libs["libdpu.so"].get("dpu_push_xfer", "cdecl")
     dpu_push_xfer.argtypes = [
         struct_dpu_set_t,
         dpu_xfer_t,
         String,
-        c_uint32,
+        uint32_t,
         c_size_t,
         dpu_xfer_flags_t]
     dpu_push_xfer.restype = dpu_error_t
 
-# dpu.h: 489
+# dpu.h: 596
 if _libs["libdpu.so"].has("dpu_push_xfer_symbol", "cdecl"):
     dpu_push_xfer_symbol = _libs["libdpu.so"].get(
         "dpu_push_xfer_symbol", "cdecl")
@@ -1802,37 +1985,37 @@ if _libs["libdpu.so"].has("dpu_push_xfer_symbol", "cdecl"):
         struct_dpu_set_t,
         dpu_xfer_t,
         struct_dpu_symbol_t,
-        c_uint32,
+        uint32_t,
         c_size_t,
         dpu_xfer_flags_t]
     dpu_push_xfer_symbol.restype = dpu_error_t
 
-# dpu.h: 508
+# dpu.h: 615
 if _libs["libdpu.so"].has("dpu_broadcast_to", "cdecl"):
     dpu_broadcast_to = _libs["libdpu.so"].get("dpu_broadcast_to", "cdecl")
     dpu_broadcast_to.argtypes = [
         struct_dpu_set_t,
         String,
-        c_uint32,
+        uint32_t,
         POINTER(None),
         c_size_t,
         dpu_xfer_flags_t]
     dpu_broadcast_to.restype = dpu_error_t
 
-# dpu.h: 527
+# dpu.h: 634
 if _libs["libdpu.so"].has("dpu_broadcast_to_symbol", "cdecl"):
     dpu_broadcast_to_symbol = _libs["libdpu.so"].get(
         "dpu_broadcast_to_symbol", "cdecl")
     dpu_broadcast_to_symbol.argtypes = [
         struct_dpu_set_t,
         struct_dpu_symbol_t,
-        c_uint32,
+        uint32_t,
         POINTER(None),
         c_size_t,
         dpu_xfer_flags_t]
     dpu_broadcast_to_symbol.restype = dpu_error_t
 
-# dpu.h: 544
+# dpu.h: 651
 if _libs["libdpu.so"].has("dpu_callback", "cdecl"):
     dpu_callback = _libs["libdpu.so"].get("dpu_callback", "cdecl")
     dpu_callback.argtypes = [
@@ -1840,13 +2023,13 @@ if _libs["libdpu.so"].has("dpu_callback", "cdecl"):
         CFUNCTYPE(
             UNCHECKED(dpu_error_t),
             struct_dpu_set_t,
-            c_uint32,
+            uint32_t,
             POINTER(None)),
         POINTER(None),
         dpu_callback_flags_t]
     dpu_callback.restype = dpu_error_t
 
-# dpu.h: 582
+# dpu.h: 689
 if _libs["libdpu.so"].has("dpu_log_read", "cdecl"):
     dpu_log_read = _libs["libdpu.so"].get("dpu_log_read", "cdecl")
     dpu_log_read.argtypes = [struct_dpu_set_t, POINTER(FILE)]
@@ -1858,7 +2041,7 @@ try:
 except BaseException:
     pass
 
-# dpu_error.h: 107
+# dpu_error.h: 118
 try:
     DPU_ERROR_ASYNC_JOB_TYPE_SHIFT = 16
 except BaseException:
@@ -1898,7 +2081,7 @@ except BaseException:
 
 
 def DPU_SLICE_TARGET_TYPE_NAME(target_type):
-    return ((c_uint32(ord_if_char(target_type))).value < NR_OF_DPU_SLICE_TARGETS) and (
+    return ((uint32_t(ord_if_char(target_type))).value < NR_OF_DPU_SLICE_TARGETS) and (
         dpu_slice_target_names[target_type]) or 'DPU_SLICE_TARGET_TYPE_UNKNOWN'
 
 
@@ -1915,7 +2098,7 @@ try:
 except BaseException:
     pass
 
-# dpu.h: 130
+# dpu.h: 150
 try:
     DPU_ALLOCATE_ALL = UINT_MAX
 except BaseException:
@@ -1945,9 +2128,15 @@ dpu_repair_config = struct_dpu_repair_config  # dpu_types.h: 316
 
 dpu_context_t = struct_dpu_context_t  # dpu_types.h: 368
 
-dpu_set_rank_iterator_t = struct_dpu_set_rank_iterator_t  # dpu.h: 250
+sg_xfer_buffer = struct_sg_xfer_buffer  # dpu_types.h: 426
 
-dpu_set_dpu_iterator_t = struct_dpu_set_dpu_iterator_t  # dpu.h: 264
+dpu_set_rank_iterator_t = struct_dpu_set_rank_iterator_t  # dpu.h: 270
+
+dpu_set_dpu_iterator_t = struct_dpu_set_dpu_iterator_t  # dpu.h: 284
+
+sg_block_info = struct_sg_block_info  # dpu.h: 473
+
+get_block_t = struct_get_block_t  # dpu.h: 501
 
 # Begin inserted files
 # Begin "<backends>/python/utils/ffi_footer.txt"

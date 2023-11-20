@@ -9,8 +9,7 @@
 #include <static_verbose.h>
 
 static struct verbose_control *this_vc;
-static inline struct verbose_control *
-__vc()
+static inline struct verbose_control *__attribute__((unused)) __vc()
 {
     if (this_vc == NULL) {
         this_vc = get_verbose_control_for("api");

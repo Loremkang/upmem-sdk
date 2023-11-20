@@ -82,6 +82,26 @@ typedef enum _dpu_xfer_flags_t {
 } dpu_xfer_flags_t;
 
 /**
+ * @brief Options for a DPU scatter gather memory transfer.
+ */
+typedef enum _dpu_sg_xfer_flags_t {
+    /** Memory transfer is executed and transfer buffer pointers are cleared. */
+    DPU_SG_XFER_DEFAULT = 0,
+    /**
+     * Memory transfer is done asynchronously. The application is given back the control once the transfer is
+     * enqueue in the asynchronous job list of the rank(s).
+     */
+    DPU_SG_XFER_ASYNC = 1 << 1,
+    /**
+     * Authorize scatter/gather memory transfers with a total number of bytes less
+     * than the value specified with the argument "length" (dpu_push_sg_xfer(.., length,..)).
+     * If this happen during a DPU_XFER_TO_DPU transfer, the remaining MRAM bytes will be filled with zeros.
+     */
+    DPU_SG_XFER_DISABLE_LENGTH_CHECK = 1 << 2,
+
+} dpu_sg_xfer_flags_t;
+
+/**
  * @brief Options for a DPU callback.
  */
 typedef enum _dpu_callback_flags_t {
@@ -446,6 +466,93 @@ dpu_copy_from_symbol(struct dpu_set_t dpu_set, struct dpu_symbol_t symbol, uint3
  */
 dpu_error_t
 dpu_prepare_xfer(struct dpu_set_t dpu_set, void *buffer);
+
+/**
+ * @brief Structure that stores the information about each scatter transfer memory block
+ */
+struct sg_block_info {
+    /** Starting address of the block */
+    uint8_t *addr;
+    /** Number of bytes to transfer for this block */
+    uint32_t length;
+};
+
+/**
+ * @brief User API prototype of the get_block function for scatter transfers
+ * @param out (output) block information
+ * @param dpu_index index of the dpu
+ * @param block_index index of the block for the current DPU
+ * @param args user arguments
+ * @return Whether this block exists or not
+ */
+typedef bool (*get_block_func_t)(struct sg_block_info *out, uint32_t dpu_index, uint32_t block_index, void *args);
+
+/**
+ * @brief User API structure that stores the scatter transfer get_block function pointer and its arguments, provided by user
+ * application
+ */
+typedef struct get_block_t {
+    /** The get_block function */
+    get_block_func_t f;
+    /** User arguments for the get_block function */
+    void *args;
+    /** Size of the user arguments */
+    size_t args_size;
+} get_block_t;
+
+/**
+ * @brief Execute the scatter/gather memory transfer on the DPU set
+ *
+ * First, prepare the host buffer blocks to be gathered from the HOST memory
+ * to the DPU MRAM or to be scattered from the DPU MRAM to the HOST memory,
+ * depending on the transfer direction. Then, performs the transfer.
+ * Blocks are prepared using the callback function (get_block_info.f),
+ * defined within the user application.
+ *
+ * @param dpu_set the identifier of the DPU set
+ * @param xfer direction of the transfer
+ * @param symbol_name the name of the DPU symbol where the transfer starts
+ * @param symbol_offset the byte offset from the base DPU symbol address where the transfer starts
+ * @param length the number of bytes to copy
+ * @param get_block_info a structure containing user function and user arguments, used to prepare the transfer
+ * @param flags options of the transfer
+ * @return Whether the operation was successful.
+ */
+dpu_error_t
+dpu_push_sg_xfer(struct dpu_set_t dpu_set,
+    dpu_xfer_t xfer,
+    const char *symbol_name,
+    uint32_t symbol_offset,
+    size_t length,
+    get_block_t *get_block_info,
+    dpu_sg_xfer_flags_t flags);
+
+/**
+ * @brief Execute the scatter/gather memory transfer on the DPU set
+ *
+ * First, prepare the host buffer blocks to be gathered from the HOST memory
+ * to the DPU MRAM or to be scattered from the DPU MRAM to the HOST memory,
+ * depending on the transfer direction. Then, performs the transfer.
+ * Blocks are prepared using the callback function (get_block_info.f),
+ * defined within the user application.
+ *
+ * @param dpu_set the identifier of the DPU set
+ * @param xfer direction of the transfer
+ * @param symbol the DPU symbol where the transfer starts
+ * @param symbol_offset the byte offset from the base DPU symbol address where the transfer starts
+ * @param length the number of bytes to copy
+ * @param get_block_info a structure containing user function and user arguments, used to prepare the transfer
+ * @param flags options of the transfer
+ * @return Whether the operation was successful.
+ */
+dpu_error_t
+dpu_push_sg_xfer_symbol(struct dpu_set_t dpu_set,
+    dpu_xfer_t xfer,
+    struct dpu_symbol_t symbol,
+    uint32_t symbol_offset,
+    size_t length,
+    get_block_t *get_block_info,
+    dpu_sg_xfer_flags_t flags);
 
 /**
  * @brief Execute the memory transfer on the DPU set

@@ -29,9 +29,13 @@ extern __mram_ptr __dma_aligned uint8_t __sys_used_mram_end[0];
  * @param to destination address in WRAM
  * @param nb_of_bytes number of bytes to transfer
  */
-static inline void
+__attribute__((unused)) static inline void
 mram_read(const __mram_ptr void *from, void *to, unsigned int nb_of_bytes)
+    __attribute__((diagnose_if(nb_of_bytes == 0, "mram_read: nb_of_bytes must not be null", "error")))
+    __attribute__((diagnose_if(nb_of_bytes > 2048, "mram_read: nb_of_bytes must not be higher than 2048", "error")))
+    __attribute__((diagnose_if(nb_of_bytes % 8 != 0, "mram_read: nb_of_bytes must be a multiple of 8", "error")))
 {
+    __builtin_assume(nb_of_bytes >= 8 && nb_of_bytes <= 2048 && nb_of_bytes % 8 == 0);
     __builtin_dpu_ldma(to, from, nb_of_bytes);
 }
 
@@ -47,9 +51,13 @@ mram_read(const __mram_ptr void *from, void *to, unsigned int nb_of_bytes)
  * @param to destination address in MRAM
  * @param nb_of_bytes number of bytes to transfer
  */
-static inline void
+__attribute__((unused)) static inline void
 mram_write(const void *from, __mram_ptr void *to, unsigned int nb_of_bytes)
+    __attribute__((diagnose_if(nb_of_bytes == 0, "mram_write: nb_of_bytes must not be null", "error")))
+    __attribute__((diagnose_if(nb_of_bytes > 2048, "mram_write: nb_of_bytes must not be higher than 2048", "error")))
+    __attribute__((diagnose_if(nb_of_bytes % 8 != 0, "mram_write: nb_of_bytes must be a multiple of 8", "error")))
 {
+    __builtin_assume(nb_of_bytes >= 8 && nb_of_bytes <= 2048 && nb_of_bytes % 8 == 0);
     __builtin_dpu_sdma(from, to, nb_of_bytes);
 }
 

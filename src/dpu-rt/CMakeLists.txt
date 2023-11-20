@@ -169,6 +169,8 @@ set(SYSLIB_C_SOURCES
         ${SYSLIB_DIR}/moddi3.c
         ${SYSLIB_DIR}/modsi3.c
         ${SYSLIB_DIR}/mram.h
+        ${SYSLIB_DIR}/mram_unaligned.h
+        ${SYSLIB_DIR}/mram_unaligned.c
         ${SYSLIB_DIR}/mul32.c
         ${SYSLIB_DIR}/mul64.c
         ${SYSLIB_DIR}/muldc3.c
@@ -179,6 +181,7 @@ set(SYSLIB_C_SOURCES
         ${SYSLIB_DIR}/mulvdi3.c
         ${SYSLIB_DIR}/mulvsi3.c
         ${SYSLIB_DIR}/mutex.h
+        ${SYSLIB_DIR}/mutex_pool.h
         ${SYSLIB_DIR}/negdf2.c
         ${SYSLIB_DIR}/negdi2.c
         ${SYSLIB_DIR}/negsf2.c
@@ -221,6 +224,7 @@ set(SYSLIB_C_SOURCES
         ${SYSLIB_DIR}/udivsi3.c
         ${SYSLIB_DIR}/umoddi3.c
         ${SYSLIB_DIR}/umodsi3.c
+        ${SYSLIB_DIR}/vmutex.h
         ${SYSLIB_DIR}/waitqueue.c
    )
 

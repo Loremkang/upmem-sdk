@@ -42,6 +42,8 @@ typedef enum _dpu_custom_command_t {
     DPU_COMMAND_EVENT_START,
     /** Notifies that an event has ended. */
     DPU_COMMAND_EVENT_END,
+    /** Provide driver with slice information */
+    DPU_COMMAND_SET_SLICE_INFO,
 } dpu_custom_command_t;
 
 /**

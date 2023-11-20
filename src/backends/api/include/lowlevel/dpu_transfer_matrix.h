@@ -34,12 +34,19 @@
  * @brief Context of a DPU memory transfer.
  */
 struct dpu_transfer_matrix {
-    /** Host buffers for the transfer, used as source or destination, depending on the transfer direction. */
-    void *ptr[MAX_NR_DPUS_PER_RANK];
+    /** Data to transfer. */
+    union {
+        /** Host buffers for the transfer, used as source or destination, depending on the transfer direction. */
+        void *ptr[MAX_NR_DPUS_PER_RANK];
+        /** Host buffers for scatter transfer, used as source or destination, depending on the transfer direction. */
+        struct sg_xfer_buffer *sg_ptr[MAX_NR_DPUS_PER_RANK];
+    };
     /** Memory offset in bytes for the transfer. */
     uint32_t offset;
     /** Transfer size in bytes. */
     uint32_t size;
+    /** Type of transfer (default or scatter gather). */
+    dpu_transfer_matrix_type_t type;
 };
 
 /**
@@ -50,6 +57,17 @@ struct dpu_transfer_matrix {
  */
 void
 dpu_transfer_matrix_add_dpu(struct dpu_t *dpu, struct dpu_transfer_matrix *transfer_matrix, void *buffer);
+
+/**
+ * @brief Add the specified DPU to the given memory transfer matrix.
+ * @param dpu the DPU
+ * @param transfer_matrix the memory transfer matrix
+ * @param buffer starting address of  host buffer block address to transfer
+ * @param length length (bytes) of the host buffer block to transfer
+ * @return Whether the operation was successful.
+ */
+dpu_error_t
+dpu_transfer_matrix_add_dpu_block(struct dpu_t *dpu, struct dpu_transfer_matrix *transfer_matrix, void *buffer, uint32_t length);
 
 /**
  * @brief Associate the specified host buffer to all DPUs of the DPU rank for the given memory transfer matrix.

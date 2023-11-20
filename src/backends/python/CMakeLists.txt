@@ -6,12 +6,8 @@ cmake_minimum_required(VERSION 3.13)
 
 find_program(PYGEN ctypesgen)
 find_program(PYFORMAT autopep8)
-find_program(PYTHON3_EXEC python3)
-execute_process(
-    COMMAND ${PYTHON3_EXEC}
-        -c "import distutils.sysconfig; print(distutils.sysconfig.get_python_lib(True, False, ''))"
-    OUTPUT_VARIABLE PYTHON_RELATIVE_PATH
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
+find_package(Python 3 REQUIRED)
+file(RELATIVE_PATH PYTHON_RELATIVE_PATH "/usr" ${Python_SITELIB})
 
 set(C_API_LIB libdpu.so)
 set(C_VPD_LIB libdpuvpd.so)
@@ -48,7 +44,7 @@ add_custom_target(
             --no-undefs
             --header-template=${CMAKE_CURRENT_SOURCE_DIR}/utils/ffi_header.txt
             --insert-file=${CMAKE_CURRENT_SOURCE_DIR}/utils/ffi_footer.txt
-        COMMAND sed -i \"s/add_library_search_dirs\(\\[\\]\)/add_library_search_dirs([os.path.dirname(os.path.dirname(os.path.dirname((os.path.dirname(__file__)))))])/\" ${CMAKE_CURRENT_SOURCE_DIR}/dpu/ffi.py
+        COMMAND sed -i "\"s/add_library_search_dirs\(\\[\\]\)/add_library_search_dirs([os.path.dirname(os.path.dirname(os.path.dirname((os.path.dirname(__file__)))))])/\"" ${CMAKE_CURRENT_SOURCE_DIR}/dpu/ffi.py
         COMMAND sed -i \"s/${BACKENDS_DIR_SED}/<backends>/\" ${CMAKE_CURRENT_SOURCE_DIR}/dpu/ffi.py
         COMMAND sed -i \"s/set\(\)/[]/\" ${CMAKE_CURRENT_SOURCE_DIR}/dpu/ffi.py
         COMMAND sed -i \"s/cache_i.add/cache_i.append/\" ${CMAKE_CURRENT_SOURCE_DIR}/dpu/ffi.py

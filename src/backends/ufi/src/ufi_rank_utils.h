@@ -31,7 +31,7 @@ static inline struct verbose_control *__vc(void)
 	return this_vc;
 }
 static struct verbose_control *temp_vc;
-static inline struct verbose_control *__temp_vc(void)
+static inline struct verbose_control *__attribute__((unused)) __temp_vc(void)
 {
 	if (temp_vc == NULL) {
 		temp_vc = get_verbose_control_for("temp");
@@ -39,7 +39,8 @@ static inline struct verbose_control *__temp_vc(void)
 	return temp_vc;
 }
 
-static inline const char *temperature_to_string(enum dpu_temperature temp)
+static inline const char *__attribute__((unused))
+temperature_to_string(enum dpu_temperature temp)
 {
 	switch (temp) {
 	case DPU_TEMPERATURE_LESS_THAN_50:
@@ -63,7 +64,8 @@ static inline const char *temperature_to_string(enum dpu_temperature temp)
 	}
 }
 
-static inline bool update_rank_temperature_sample_time(struct dpu_rank_t *rank)
+static inline bool __attribute__((unused))
+update_rank_temperature_sample_time(struct dpu_rank_t *rank)
 {
 	struct timespec latest = rank->temperature_sample_time;
 	struct timespec now;
@@ -165,8 +167,9 @@ static inline bool update_rank_temperature_sample_time(struct dpu_rank_t *rank)
 		 __func__, packet_str);                                        \
 	} while (0)
 
-static inline uint32_t debug_record_last_cmd(struct dpu_rank_t *rank,
-					     char direction, uint64_t *commands)
+static inline uint32_t __attribute__((unused))
+debug_record_last_cmd(struct dpu_rank_t *rank, char direction,
+		      uint64_t *commands)
 {
 	struct dpu_debug_context_t *debug = GET_DEBUG(rank);
 	uint8_t nr_cis = GET_DESC_HW(rank)->topology.nr_of_control_interfaces;
@@ -215,5 +218,10 @@ static inline uint32_t debug_record_last_cmd(struct dpu_rank_t *rank,
 
 #define DIV_ROUND_UP_ULL(ll, d)                                                \
 	DIV_ROUND_DOWN_ULL((unsigned long long)(ll) + (d)-1, (d))
+
+static inline bool __attribute__((unused)) is_chip_v1_4(struct dpu_rank_t *rank)
+{
+	return ((GET_DESC_HW(rank)->signature.chip_id & 0xF0) == 0x40);
+}
 
 #endif // __UFI_RANK_UTILS_H__

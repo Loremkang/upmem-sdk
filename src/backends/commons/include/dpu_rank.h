@@ -166,6 +166,7 @@ struct dpu_rank_t {
     dpu_rank_id_t rank_id;
     dpu_rank_id_t rank_handler_allocator_id;
     dpu_description_t description;
+    uint32_t dpu_offset;
     struct dpu_runtime_state_t runtime;
     struct dpu_debug_context_t debug;
     struct _dpu_profiling_context_t profiling_context;
@@ -182,6 +183,8 @@ struct dpu_rank_t {
         pthread_t threads[NR_THREADS_PER_RANK_MAX];
 
         struct dpu_transfer_matrix matrix;
+        struct sg_xfer_buffer sg_buffer_pool[MAX_NR_DPUS_PER_RANK];
+        bool sg_xfer_enabled;
 
         pthread_t callback_tid;
         bool callback_tid_set;

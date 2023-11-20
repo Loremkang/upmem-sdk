@@ -87,8 +87,19 @@ typedef enum dpu_error_t {
     DPU_ERR_INVALID_BUFFER_SIZE,
     /** Error returned when enqueueing a non-blocking synchronous callback */
     DPU_ERR_NONBLOCKING_SYNC_CALLBACK,
-    /** Error returned when something wrong occured in the jobs async queue */
-    DPU_ERR_ASYNC_JOBS = 1 << 31,
+    /** Error returned when the DPU program uses more tasklets than the hardware has threads */
+    DPU_ERR_TOO_MANY_TASKLETS,
+    /** Error returned when the number of scatter gather transfer blocks exceeds the maximal number of blocks */
+    DPU_ERR_SG_TOO_MANY_BLOCKS,
+    /** Error returned when the scatter transfer total number of bytes in prepared blocks mismatch with
+        the size of the transfer (dpu_push_sg_xfer(..,.length,...)) */
+    DPU_ERR_SG_LENGTH_MISMATCH,
+    /** Error returned when a scatter gather transfer is performed without prior SG transfer activation */
+    DPU_ERR_SG_NOT_ACTIVATED,
+    /** Error returned when scatter gather transfer symbol is not a MRAM symbol */
+    DPU_ERR_SG_NOT_MRAM_SYMBOL,
+    /** Error returned if one sg xfer is launched and the sg buffer pool has not been initialized */
+    DPU_ERR_ASYNC_JOBS = 1U << 31,
 } dpu_error_t;
 
 /**

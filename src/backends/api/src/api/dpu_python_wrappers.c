@@ -28,9 +28,10 @@ Py_print_fct(void *arg, const char *fmt, ...)
     va_start(ap, fmt);
     if (vasprintf(&str, fmt, ap) == -1) {
         LOG_FN(WARNING, "vasprintf failed");
+        va_end(ap);
         return DPU_ERR_SYSTEM;
     }
-    PyAPI_FUNC(PyGILState_STATE) gil_state = PyGILState_Ensure();
+    PyGILState_STATE gil_state = PyGILState_Ensure();
     PyFile_WriteString(str, (PyObject *)arg);
     PyGILState_Release(gil_state);
     free(str);
@@ -158,9 +159,15 @@ __API_SYMBOL__ PyObject *
 Py_dpu_get_symbol_names(struct dpu_program_t *program)
 {
     uint32_t nr_symbols = program->symbols->nr_symbols;
+
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
     PyObject *list = PyList_New(nr_symbols);
     for (uint32_t each_symbol = 0; each_symbol < nr_symbols; ++each_symbol) {
         PyList_SetItem(list, each_symbol, PyUnicode_FromString(program->symbols->map[each_symbol].name));
     }
+
+    PyGILState_Release(gstate);
+
     return list;
 }

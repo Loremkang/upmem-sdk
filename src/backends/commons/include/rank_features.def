@@ -28,7 +28,7 @@ FEATURE(poll_rank, struct dpu_rank_t *, dpu_bitfield_t *, dpu_bitfield_t *)
 FEATURE(sample_pc_dpu, struct dpu_t *, iram_addr_t *)
 
 // DEBUG
-FEATURE(debug_init_dpu, struct dpu_t *, struct dpu_context_t *)
+FEATURE(debug_init_dpu, struct dpu_t *, struct dpu_context_t *, mram_addr_t)
 FEATURE(debug_teardown_dpu, struct dpu_t *, struct dpu_context_t *)
 FEATURE(debug_step_dpu, struct dpu_t *, struct dpu_context_t *, dpu_thread_t)
 

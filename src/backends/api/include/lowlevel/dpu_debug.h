@@ -63,10 +63,11 @@ dpu_restore_context_for_dpu(struct dpu_t *dpu, struct dpu_context_t *context);
  *
  * @param dpu the unique identifier of the dpu
  * @param context the debug context which will store the thread scheduling and the different fault states
+ * @param error_store_addr the address of the variable for caching error information between initialisations
  * @return Whether the operation was successful.
  */
 dpu_error_t
-dpu_initialize_fault_process_for_dpu(struct dpu_t *dpu, struct dpu_context_t *context);
+dpu_initialize_fault_process_for_dpu(struct dpu_t *dpu, struct dpu_context_t *context, mram_addr_t error_store_addr);
 
 /**
  * @brief Restarts the DPU execution after a fault and a potential debugging procedure.

@@ -26,6 +26,9 @@
 #define MUX_DPU_BANK_CTRL (1 << 0)
 /* Bit set when the DPU can write to the bank */
 #define MUX_DPU_WRITE_CTRL (1 << 1)
+/* Bit set when the DPU owns refresh */
+#define MUX_DPU_REFRESH_CTRL (1 << 2)
+
 /* Bit set when the host or the DPU wrote to the bank without permission */
 #define MUX_COLLISION_ERR (1 << 7)
 
@@ -366,12 +369,12 @@ static inline uint8_t count_nr_of_faulty_bits(uint64_t data)
 
 static inline uint8_t find_index_of_first_faulty_bit(uint64_t data)
 {
-	return __builtin_ctz(data);
+	return __builtin_ctzll(data);
 }
 
 static inline uint8_t find_index_of_last_faulty_bit(uint64_t data)
 {
-	return 63 - __builtin_clz(data);
+	return 63 - __builtin_clzll(data);
 }
 
 static bool
@@ -402,6 +405,12 @@ extract_memory_repair_configuration(struct dpu_t *dpu,
 	for (each_corrupted_addr_index = 0;
 	     each_corrupted_addr_index < nr_of_corrupted_addr;
 	     ++each_corrupted_addr_index) {
+		if (each_corrupted_addr_index >= NB_MAX_REPAIR_ADDR) {
+			LOG_DPU(DEBUG, dpu,
+				"ERROR: too many corrupted addresses (%d > %d)",
+				nr_of_corrupted_addr, NB_MAX_REPAIR_ADDR);
+			return false;
+		}
 		LOG_DPU(DEBUG, dpu,
 			"repair info: #%d address: 0x%04x faulty_bits: 0x%016lx",
 			each_corrupted_addr_index,
@@ -411,13 +420,6 @@ extract_memory_repair_configuration(struct dpu_t *dpu,
 			repair_info
 				->corrupted_addresses[each_corrupted_addr_index]
 				.faulty_bits);
-	}
-
-	if (nr_of_corrupted_addr > NB_MAX_REPAIR_ADDR) {
-		LOG_DPU(DEBUG, dpu,
-			"ERROR: too many corrupted addresses (%d > %d)",
-			nr_of_corrupted_addr, NB_MAX_REPAIR_ADDR);
-		return false;
 	}
 
 	for (each_corrupted_addr_index = 0;
@@ -1036,6 +1038,7 @@ __API_SYMBOL__ dpu_error_t ci_reset_rank(struct dpu_rank_t *rank)
 	FF(dpu_switch_mux_for_rank(
 		rank, desc->configuration.api_must_switch_mram_mux));
 	FF(dpu_init_groups(rank, all_dpus_are_enabled_save, enabled_dpus_save));
+	FF(dpu_custom_for_rank(rank, DPU_COMMAND_SET_SLICE_INFO, NULL));
 
 end:
 	return status;
@@ -1091,7 +1094,8 @@ __API_SYMBOL__ dpu_error_t ci_reset_dpu(struct dpu_t *dpu)
 
 	FF(dpu_custom_for_dpu(dpu, DPU_COMMAND_DPU_SOFT_RESET, NULL));
 
-	FF(dpu_initialize_fault_process_for_dpu(dpu, &context));
+	FF(dpu_initialize_fault_process_for_dpu(dpu, &context,
+						(mram_addr_t)0 /*nullptr*/));
 
 	FF(ufi_select_dpu(rank, &mask, member_id));
 
@@ -1203,7 +1207,8 @@ static dpu_error_t dpu_check_wavegen_mux_status_for_dpu(struct dpu_rank_t *rank,
 				each_slice, dpu_id, dpu_dma_ctrl,
 				expected[each_slice]);
 
-			if ((dpu_dma_ctrl & 0x7F) != expected[each_slice]) {
+			// Do not check MUX_DPU_REFRESH_CTRL bit
+			if ((dpu_dma_ctrl & 0x7B) != expected[each_slice]) {
 				should_retry = true;
 				break;
 			}
@@ -1230,7 +1235,6 @@ dpu_check_wavegen_mux_status_for_rank(struct dpu_rank_t *rank, uint8_t expected)
 	dpu_error_t status;
 	uint8_t dpu_dma_ctrl;
 	uint8_t result_array[DPU_MAX_NR_CIS];
-	uint32_t timeout;
 	uint8_t ci_mask = ALL_CIS, mask;
 	uint8_t nr_dpus =
 		rank->description->hw.topology.nr_of_dpus_per_control_interface;
@@ -1256,7 +1260,7 @@ dpu_check_wavegen_mux_status_for_rank(struct dpu_rank_t *rank, uint8_t expected)
 	FF(ufi_clear_dma_ctrl(rank, ci_mask));
 
 	for (each_dpu = 0; each_dpu < nr_dpus; ++each_dpu) {
-		timeout = TIMEOUT_MUX_STATUS;
+		uint32_t timeout = TIMEOUT_MUX_STATUS;
 
 		do {
 			dpu_slice_id_t each_slice;
@@ -1273,7 +1277,8 @@ dpu_check_wavegen_mux_status_for_rank(struct dpu_rank_t *rank, uint8_t expected)
 
 				dpu_dma_ctrl = result_array[each_slice];
 
-				if ((dpu_dma_ctrl & 0x7F) != expected) {
+				// Do not check MUX_DPU_REFRESH_CTRL bit
+				if ((dpu_dma_ctrl & 0x7B) != expected) {
 					LOG_RANK(VERBOSE, rank,
 						 "DPU (%d, %d) failed",
 						 each_slice, each_dpu);

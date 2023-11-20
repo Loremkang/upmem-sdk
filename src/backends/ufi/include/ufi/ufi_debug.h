@@ -6,7 +6,8 @@
 #include <dpu_error.h>
 #include <dpu_types.h>
 
-dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu, struct dpu_context_t *context);
+dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu, struct dpu_context_t *context,
+			      mram_addr_t error_store_addr);
 
 dpu_error_t ci_debug_teardown_dpu(struct dpu_t *dpu,
 				  struct dpu_context_t *context);

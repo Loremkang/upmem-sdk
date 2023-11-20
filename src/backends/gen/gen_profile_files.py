@@ -31,6 +31,8 @@ PROPERTIES = [
     # High-Level API
     Property('nrThreadsPerRank'        , 'u32' ),
     Property('nrJobsPerRank'           , 'u32' ),
+    Property('sgXferEnable'            , 'bool'),
+    Property('sgXferMaxBlocksPerDpu'   , 'u32' ),
 
     # FSIM
     Property('nrDpusPerCi'             , 'u32' ),

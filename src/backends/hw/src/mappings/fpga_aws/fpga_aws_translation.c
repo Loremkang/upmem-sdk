@@ -33,7 +33,7 @@ fpga_aws_write_to_cis(struct dpu_region_address_translation *tr,
     uint8_t nb_cis;
     int i;
 
-    nb_cis = tr->interleave->nb_ci;
+    nb_cis = tr->desc->topology.nr_of_control_interfaces;
 
     for (i = 0; i < nb_cis; ++i) {
         uint64_t *command = &((uint64_t *)block_data)[i];
@@ -59,7 +59,7 @@ fpga_aws_read_from_cis(struct dpu_region_address_translation *tr,
     uint8_t nb_cis;
     int i;
 
-    nb_cis = tr->interleave->nb_ci;
+    nb_cis = tr->desc->topology.nr_of_control_interfaces;
 
     for (i = 0; i < nb_cis; ++i) {
         uint64_t *result = &((uint64_t *)block_data)[i];
@@ -90,14 +90,7 @@ fpga_aws_init_rank(__attribute__((unused)) struct dpu_region_address_translation
     return 0;
 }
 
-struct dpu_region_interleaving fpga_aws_interleave = {
-    .nb_ci = 4,
-    .nb_dpus_per_ci = 8,
-    .mram_size = 64 * 1024 * 1024,
-};
-
 struct dpu_region_address_translation fpga_aws_translate = {
-    .interleave = &fpga_aws_interleave,
     .backend_id = DPU_BACKEND_FPGA_AWS,
     .capabilities = CAP_HYBRID_CONTROL_INTERFACE | CAP_SAFE,
     .hybrid_mmap_size = 4 /* nb_cis */ * 4 * 1024,

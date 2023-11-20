@@ -83,7 +83,7 @@ dpu_restore_context_for_dpu(struct dpu_t *dpu, struct dpu_context_t *context)
 }
 
 __API_SYMBOL__ dpu_error_t
-dpu_initialize_fault_process_for_dpu(struct dpu_t *dpu, struct dpu_context_t *context)
+dpu_initialize_fault_process_for_dpu(struct dpu_t *dpu, struct dpu_context_t *context, dpu_mem_max_addr_t error_store_addr)
 {
     LOG_DPU(DEBUG, dpu, "");
 
@@ -96,7 +96,7 @@ dpu_initialize_fault_process_for_dpu(struct dpu_t *dpu, struct dpu_context_t *co
 
     dpu_lock_rank(rank);
 
-    FF(RANK_FEATURE(rank, debug_init_dpu)(dpu, context));
+    FF(RANK_FEATURE(rank, debug_init_dpu)(dpu, context, error_store_addr));
 
 end:
     dpu_unlock_rank(rank);

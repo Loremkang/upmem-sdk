@@ -137,6 +137,27 @@ get_set_description(struct dpu_set_t *set)
 }
 
 static dpu_error_t
+dpu_load_sanity_check(struct dpu_program_t *runtime, dpu_description_t description)
+{
+    dpu_error_t status = DPU_OK;
+    uint8_t nr_tasklets;
+    uint8_t nr_threads;
+
+    /* Make sure the DPU program does not use more tasklets than the hardware has threads. */
+    nr_tasklets = runtime->nr_threads_enabled;
+    nr_threads = description->hw.dpu.nr_of_threads;
+    if (nr_tasklets > nr_threads) {
+        LOG_FN(WARNING,
+            "dpu program uses %d tasklets, while this hardware version supports up to %d threads only.",
+            nr_tasklets,
+            nr_threads);
+        status = DPU_ERR_TOO_MANY_TASKLETS;
+    }
+
+    return status;
+}
+
+static dpu_error_t
 dpu_load_generic(struct dpu_set_t dpu_set,
     const char *path,
     uint8_t *buffer,
@@ -160,6 +181,10 @@ dpu_load_generic(struct dpu_set_t dpu_set,
         != DPU_OK) {
         free(runtime);
         goto end;
+    }
+
+    if ((status = dpu_load_sanity_check(runtime, description)) != DPU_OK) {
+        goto free_runtime;
     }
 
     uint32_t freq_addr = DPU_ADDRESSES_FREQ_UNSET;

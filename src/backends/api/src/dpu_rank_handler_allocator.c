@@ -196,35 +196,44 @@ dpu_rank_handler_end_iteration()
     exclusively_end_reader();
 }
 
-static void
+static bool
 dpu_rank_list_update_next()
 {
     for (unsigned int each_rank = 0; each_rank < dpu_rank_handler_dpu_rank_list_size; each_rank++) {
         struct dpu_rank_t **rank = &dpu_rank_handler_dpu_rank_list[each_rank];
         if (*rank == NULL) {
             dpu_rank_handler_next_dpu_rank = rank;
-            return;
+            return true;
         }
     }
     unsigned int dpu_rank_handler_next_dpu_rank_id = dpu_rank_handler_dpu_rank_list_size;
     dpu_rank_handler_dpu_rank_list_size = dpu_rank_handler_dpu_rank_list_size * 2 + 1;
-    dpu_rank_handler_dpu_rank_list
+    struct dpu_rank_t **tmp
         = realloc(dpu_rank_handler_dpu_rank_list, dpu_rank_handler_dpu_rank_list_size * sizeof(struct dpu_rank_t **));
+    if (tmp == NULL) {
+        fprintf(stderr, "Failed to allocate memory for DPU rank list\n");
+        return false;
+    } else {
+        dpu_rank_handler_dpu_rank_list = tmp;
+    }
 
     memset(&dpu_rank_handler_dpu_rank_list[dpu_rank_handler_next_dpu_rank_id],
         0,
         (dpu_rank_handler_dpu_rank_list_size - dpu_rank_handler_next_dpu_rank_id) * sizeof(struct dpu_rank_t **));
 
     dpu_rank_handler_next_dpu_rank = &dpu_rank_handler_dpu_rank_list[dpu_rank_handler_next_dpu_rank_id];
+
+    return true;
 }
 
-static void
+static bool
 dpu_rank_list_add(struct dpu_rank_t *rank)
 {
     exclusively();
     *dpu_rank_handler_next_dpu_rank = rank;
-    dpu_rank_list_update_next();
+    bool status = dpu_rank_list_update_next();
     exclusively_end();
+    return status;
 }
 
 static void
@@ -332,7 +341,8 @@ dpu_rank_handler_get_rank(struct dpu_rank_t *rank, dpu_rank_handler_context_t ha
 
     clock_gettime(CLOCK_MONOTONIC, &rank->temperature_sample_time);
 
-    dpu_rank_list_add(rank);
+    if (!dpu_rank_list_add(rank))
+        return false;
 
     return status == DPU_RANK_SUCCESS;
 }
@@ -457,13 +467,14 @@ find_library_symbol(dpu_type_t target_type, const char *symbol_name, void **symb
 static bool
 find_library_from_string(dpu_type_t target_type, const char *lib_path, bool verbose)
 {
-    char *dl_error;
     dlerror();
     if ((handler_context[target_type].library = dlopen(lib_path, RTLD_LAZY)) == NULL) {
         if (verbose) {
             fprintf(stderr, "cannot open library %s", lib_path);
-            if ((dl_error = dlerror()) != NULL) {
-                fprintf(stderr, ": %s", dl_error);
+            {
+                char *dl_error = dlerror();
+                if (dl_error != NULL)
+                    fprintf(stderr, ": %s", dl_error);
             }
             fprintf(stderr, "\n");
         }

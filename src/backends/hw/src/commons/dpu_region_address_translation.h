@@ -14,6 +14,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <dpu_chip_id.h>
+#include <dpu_types.h>
+#include <dpu_hw_description.h>
+
 #define DPU_XFER_THREAD_CONF_DEFAULT (UINT_MAX)
 struct dpu_transfer_thread_configuration {
     uint32_t nb_thread_per_pool;
@@ -28,6 +32,7 @@ enum {
 #endif
     DPU_BACKEND_FPGA_KC705,
     DPU_BACKEND_FPGA_AWS,
+    DPU_BACKEND_FPGA_KU250U2,
 #ifdef __powerpc64__
     DPU_BACKEND_POWER9,
 #endif
@@ -44,42 +49,18 @@ enum {
 
 extern struct dpu_region_address_translation *backend_translate[];
 
-/* The following (strong) assumptions are made:
- *
- * 1/ This implements address translation for the following configuration:
- *   - Socket interleaving: disabled
- *   - Die interleaving: disabled
- *   - Channel interleaving: enabled
- * This configuration allows one NUMA node per die.
- *
- * 2/ Symmetrical topology:
- *   - Same dimms with same number of ranks
- *   - Each channel is populated with the same number of dimms
- */
-
-/* How to optimize throughput:
- * To access one bank, one row must be *activated*: one row being 1kB long.
- * => Access to a bank must be 1kB contiguous into the bank.
- * It is possible to activate 4 banks into a DRAM.
- * *activate* means the load/store will go into DRAM buffer (called the row
- * buffer)
- * *precharge* will flush this buffer into the corresponding row
- */
-
-struct dpu_region_interleaving {
-    /* Per-rank info */
-    uint8_t nb_ci;
-    uint8_t nb_dpus_per_ci;
-    uint32_t mram_size;
-};
-
 #ifndef struct_dpu_transfer_matrix_t
 #define struct_dpu_transfer_matrix_t
 #define MAX_NR_DPUS_PER_RANK 64
 struct dpu_transfer_matrix {
-    void *ptr[MAX_NR_DPUS_PER_RANK];
+    union {
+        void *ptr[MAX_NR_DPUS_PER_RANK];
+        struct sg_xfer_buffer *sg_ptr[MAX_NR_DPUS_PER_RANK];
+    };
     uint32_t offset;
     uint32_t size;
+    // TBC : compilation issue if using enum defined in dpu_types.h
+    uint8_t type;
 };
 #endif
 
@@ -107,7 +88,7 @@ struct dpu_transfer_matrix {
  */
 struct dpu_region_address_translation {
     /* Physical topology */
-    struct dpu_region_interleaving *interleave;
+    struct dpu_hw_description_t *desc;
 
     /* Id exposed through sysfs for userspace. */
     uint8_t backend_id;

@@ -5,6 +5,7 @@
 
 #include <dpu.h>
 #include "dpu_attributes.h"
+#include <dpu_characteristics.h>
 #include <dpu_error.h>
 #include <dpu_instruction_encoder.h>
 #include <dpu_internals.h>
@@ -25,11 +26,17 @@
 
 #define DPU_FAULT_UNKNOWN_ID (0xffffff)
 
+// We use the same coredump format for all versions of the chip.
+// Work registers/flags are saved at the same WRAM offset, whatever the number of atomic bits/work registers is,
+#define ATOMIC_REG_SIZE_IN_WORDS (DPU_NR_ATOMIC_BITS / sizeof(dpuword_t))
+#define WORK_REGS_SIZE_IN_WORDS (DPU_NR_THREADS * DPU_NR_WORK_REGS)
+#define FLAGS_SIZE_IN_WORDS (DPU_NR_THREADS * 1)
+
 typedef dpuinstruction_t *(*fetch_program_t)(iram_size_t *);
 typedef dpu_error_t (*routine_t)(dpu_slice_id_t, dpu_member_id_t,
 				 struct dpu_rank_t *, dpuword_t *,
 				 struct dpu_context_t *, wram_size_t, uint32_t,
-				 uint8_t, uint8_t, wram_size_t);
+				 uint8_t, uint8_t);
 
 static dpu_error_t extract_bkp_fault_id(struct dpu_t *dpu, iram_addr_t pc,
 					uint32_t *bkp_fault_id)
@@ -57,7 +64,7 @@ static dpu_error_t extract_bkp_fault_id(struct dpu_t *dpu, iram_addr_t pc,
 
 	// We need to reconstruct the immediate
 	for (each_bit = 0; each_bit < 32; ++each_bit) {
-		uint32_t bit_mask = 1 << each_bit;
+		uint32_t bit_mask = 1U << each_bit;
 		dpuinstruction_t bit_location =
 			FAULTi(bit_mask) ^ fault_instruction_mask;
 		dpuinstruction_t bit_in_instruction =
@@ -186,8 +193,29 @@ static bool decode_error_storage(uint32_t storage, bool *dma_fault,
 	return true;
 }
 
+static bool get_error_store_symbol(struct dpu_program_t *program,
+				   mram_addr_t error_store_addr,
+				   struct dpu_symbol_t *dpu_error_storage)
+{
+	// Try to get the error from the program to start with:
+	if (program) {
+		// name matching variable defined in dpu-rt/.../crt0.c
+		if (dpu_get_symbol(program, "error_storage",
+				   dpu_error_storage) == DPU_OK) {
+			return true;
+		}
+	} else if (error_store_addr != (mram_addr_t)0 /*nullptr*/) {
+		// create a symbol out of the raw integer address
+		dpu_error_storage->address = error_store_addr;
+		dpu_error_storage->size = sizeof(dpuword_t);
+		return true;
+	}
+	return false;
+}
+
 __API_SYMBOL__ dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu,
-					     struct dpu_context_t *context)
+					     struct dpu_context_t *context,
+					     mram_addr_t error_store_addr)
 {
 	struct dpu_rank_t *rank = dpu->rank;
 	dpu_slice_id_t slice_id = dpu->slice_id;
@@ -206,6 +234,8 @@ __API_SYMBOL__ dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu,
 	uint8_t mask = CI_MASK_ONE(slice_id);
 	uint8_t result_array[DPU_MAX_NR_CIS];
 	uint8_t nr_of_running_threads;
+
+	struct dpu_symbol_t dpu_error_storage;
 	bool remember_fault =
 		false; // used to write to wram only if needed (error exists)
 
@@ -307,58 +337,45 @@ __API_SYMBOL__ dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu,
 				       context->pcs + mem_fault_thread_index));
 	}
 
-	// if a program is loaded
-	if (dpu->program) {
-		struct dpu_symbol_t dpu_error_storage;
+	// in case of symbol not existing (asm-coded dpu program), doing nothing
+	// get the right symbol for the DPU.
+	// read at this address
+	// update the dpu_context_t
+	// write at this address if the new debug state if necessary
+	if (get_error_store_symbol(dpu->program, error_store_addr,
+				   &dpu_error_storage)) {
 		dpuword_t storage = 0;
 		bool dma_f, mem_f;
 		dpu_thread_t dma_thread, mem_thread;
-		// in case of symbol not existing (asm-coded dpu program), doing nothing
-		// get the right symbol for the DPU.
-		// read at this address
-		// update the dpu_context_t
-		// write at this address if the new debug state if necessary
+		FF(ci_copy_from_wrams_dpu(
+			dpu, &storage,
+			dpu_error_storage.address / sizeof(dpuword_t), 1));
 
-		// name matching variable defined in dpu-rt/.../crt0.c
-		if (dpu_get_symbol(dpu->program, "error_storage",
-				   &dpu_error_storage) == DPU_OK) {
-			// memory transfer here (read in storage) Wram is virtually mapped at address 0 and offset is expressed by dpuword_t indexing.
-			FF(ci_copy_from_wrams_dpu(dpu, &storage,
-						  dpu_error_storage.address /
-							  sizeof(dpuword_t),
-						  1));
-
-			if (decode_error_storage(storage, &dma_f, &dma_thread,
-						 &mem_f, &mem_thread)) {
-				// update context
-				context->dma_fault =
-					context->dma_fault || dma_f;
-				if ((dma_fault & mask_one) == 0) {
-					context->dma_fault_thread_index =
-						dma_thread;
-				}
-				context->mem_fault =
-					context->mem_fault || mem_f;
-				if ((mem_fault & mask_one) == 0) {
-					context->mem_fault_thread_index =
-						mem_thread;
-				}
+		if (decode_error_storage(storage, &dma_f, &dma_thread, &mem_f,
+					 &mem_thread)) {
+			// update context
+			context->dma_fault = context->dma_fault || dma_f;
+			if ((dma_fault & mask_one) == 0) {
+				context->dma_fault_thread_index = dma_thread;
 			}
-
-			if (remember_fault) {
-				// here write to memory, read out of storage
-				storage = encode_error_storage(
-					context->dma_fault,
-					context->dma_fault_thread_index,
-					context->mem_fault,
-					context->dma_fault_thread_index);
-
-				FF(ci_copy_to_wrams_dpu(
-					dpu,
-					dpu_error_storage.address /
-						sizeof(dpuword_t),
-					&storage, 1));
+			context->mem_fault = context->mem_fault || mem_f;
+			if ((mem_fault & mask_one) == 0) {
+				context->mem_fault_thread_index = mem_thread;
 			}
+		}
+
+		if (remember_fault) {
+			// here write to memory, read out of storage
+			storage = encode_error_storage(
+				context->dma_fault,
+				context->dma_fault_thread_index,
+				context->mem_fault,
+				context->dma_fault_thread_index);
+
+			FF(ci_copy_to_wrams_dpu(dpu,
+						dpu_error_storage.address /
+							sizeof(dpuword_t),
+						&storage, 1));
 		}
 	}
 
@@ -607,8 +624,6 @@ static dpu_error_t dpu_execute_routine_for_dpu(struct dpu_t *dpu,
 	uint8_t nr_of_threads_per_dpu = rank->description->hw.dpu.nr_of_threads;
 	uint8_t nr_of_work_registers_per_thread =
 		rank->description->hw.dpu.nr_of_work_registers_per_thread;
-	wram_size_t atomic_register_size_in_words =
-		nr_of_atomic_bits_per_dpu / sizeof(dpuword_t);
 
 	dpu_error_t status;
 	iram_size_t program_size_in_instructions;
@@ -647,9 +662,8 @@ static dpu_error_t dpu_execute_routine_for_dpu(struct dpu_t *dpu,
 			 program_size_in_instructions));
 
 	// 2. Save WRAM
-	context_size_in_words =
-		atomic_register_size_in_words +
-		(nr_of_threads_per_dpu * (nr_of_work_registers_per_thread + 1));
+	context_size_in_words = ATOMIC_REG_SIZE_IN_WORDS +
+				WORK_REGS_SIZE_IN_WORDS + FLAGS_SIZE_IN_WORDS;
 
 	if ((wram_backup = malloc(context_size_in_words *
 				  sizeof(*wram_backup))) == NULL) {
@@ -665,7 +679,7 @@ static dpu_error_t dpu_execute_routine_for_dpu(struct dpu_t *dpu,
 	     ++each_thread) {
 		set_pc_in_core_dump_or_restore_registers(
 			each_thread, context->pcs[each_thread], program,
-			program_size_in_instructions, nr_of_threads_per_dpu);
+			program_size_in_instructions);
 	}
 
 	// 4. Load IRAM with core dump program
@@ -682,8 +696,7 @@ static dpu_error_t dpu_execute_routine_for_dpu(struct dpu_t *dpu,
 
 	FF(routine(slice_id, member_id, rank, raw_context, context,
 		   context_size_in_words, nr_of_atomic_bits_per_dpu,
-		   nr_of_threads_per_dpu, nr_of_work_registers_per_thread,
-		   atomic_register_size_in_words));
+		   nr_of_threads_per_dpu, nr_of_work_registers_per_thread));
 
 	// 6. Restore WRAM
 	wram_array[slice_id] = wram_backup;
@@ -733,14 +746,15 @@ static dpu_error_t dpu_extract_context_for_dpu_routine(
 	struct dpu_rank_t *rank, dpuword_t *raw_context,
 	struct dpu_context_t *context, wram_size_t context_size_in_words,
 	uint32_t nr_of_atomic_bits_per_dpu, uint8_t nr_of_threads_per_dpu,
-	uint8_t nr_of_work_registers_per_thread,
-	wram_size_t atomic_register_size_in_words)
+	uint8_t nr_of_work_registers_per_thread)
 {
 	dpu_error_t status;
 	dpuword_t *wram_array[DPU_MAX_NR_CIS];
 	uint8_t mask = CI_MASK_ONE(slice_id);
 	uint32_t each_atomic_bit;
 	dpu_thread_t each_thread;
+	wram_addr_t regs_offset;
+	wram_addr_t flags_offset;
 
 	// 1. Boot and wait
 	FF(dpu_boot_and_wait_for_dpu(slice_id, member_id, rank));
@@ -751,6 +765,9 @@ static dpu_error_t dpu_extract_context_for_dpu_routine(
 	FF(ufi_wram_read(rank, mask, wram_array, 0, context_size_in_words));
 
 	// 3. Format context
+	regs_offset = ATOMIC_REG_SIZE_IN_WORDS;
+	flags_offset = ATOMIC_REG_SIZE_IN_WORDS + WORK_REGS_SIZE_IN_WORDS;
+
 	for (each_atomic_bit = 0; each_atomic_bit < nr_of_atomic_bits_per_dpu;
 	     ++each_atomic_bit) {
 		context->atomic_register[each_atomic_bit] =
@@ -760,10 +777,7 @@ static dpu_error_t dpu_extract_context_for_dpu_routine(
 	for (each_thread = 0; each_thread < nr_of_threads_per_dpu;
 	     ++each_thread) {
 		uint32_t each_register_index;
-		uint32_t flags = raw_context[atomic_register_size_in_words +
-					     (nr_of_work_registers_per_thread *
-					      nr_of_threads_per_dpu) +
-					     each_thread];
+		uint32_t flags = raw_context[flags_offset + each_thread];
 
 		for (each_register_index = 0;
 		     each_register_index < nr_of_work_registers_per_thread;
@@ -772,8 +786,8 @@ static dpu_error_t dpu_extract_context_for_dpu_routine(
 				each_thread * nr_of_work_registers_per_thread +
 				each_register_index;
 			wram_size_t odd_register_context_index =
-				atomic_register_size_in_words +
-				(each_register_index * nr_of_threads_per_dpu) +
+				regs_offset +
+				(each_register_index * DPU_NR_THREADS) +
 				(2 * each_thread);
 
 			context->registers[even_register_index] =
@@ -795,21 +809,26 @@ static dpu_error_t dpu_restore_context_for_dpu_routine(
 	struct dpu_rank_t *rank, dpuword_t *raw_context,
 	struct dpu_context_t *context, wram_size_t context_size_in_words,
 	uint32_t nr_of_atomic_bits_per_dpu, uint8_t nr_of_threads_per_dpu,
-	uint8_t nr_of_work_registers_per_thread,
-	wram_size_t atomic_register_size_in_words)
+	uint8_t nr_of_work_registers_per_thread)
 {
 	dpu_error_t status;
 	dpuword_t *wram_array[DPU_MAX_NR_CIS];
 	uint32_t each_atomic_bit;
 	dpu_thread_t each_thread;
 	uint8_t mask = CI_MASK_ONE(slice_id);
+	wram_addr_t regs_offset;
+	wram_addr_t flags_offset;
 
 	// 1. Format raw context
+	regs_offset = ATOMIC_REG_SIZE_IN_WORDS;
+	flags_offset = ATOMIC_REG_SIZE_IN_WORDS + WORK_REGS_SIZE_IN_WORDS;
+
 	for (each_atomic_bit = 0; each_atomic_bit < nr_of_atomic_bits_per_dpu;
 	     ++each_atomic_bit) {
 		((uint8_t *)raw_context)[each_atomic_bit] =
 			context->atomic_register[each_atomic_bit] ? 0xFF : 0x00;
 	}
+
 	for (each_thread = 0; each_thread < nr_of_threads_per_dpu;
 	     ++each_thread) {
 		uint32_t each_register_index;
@@ -819,24 +838,21 @@ static dpu_error_t dpu_restore_context_for_dpu_routine(
 		for (each_register_index = 0;
 		     each_register_index < nr_of_work_registers_per_thread;
 		     each_register_index += 2) {
-			uint32_t even_regsiter_index =
+			uint32_t even_register_index =
 				each_thread * nr_of_work_registers_per_thread +
 				each_register_index;
 			wram_size_t odd_register_context_index =
-				atomic_register_size_in_words +
-				(each_register_index * nr_of_threads_per_dpu) +
+				regs_offset +
+				(each_register_index * DPU_NR_THREADS) +
 				(2 * each_thread);
 
 			raw_context[odd_register_context_index] =
-				context->registers[even_regsiter_index + 1];
+				context->registers[even_register_index + 1];
 			raw_context[odd_register_context_index + 1] =
-				context->registers[even_regsiter_index];
+				context->registers[even_register_index];
 		}
 
-		raw_context[atomic_register_size_in_words +
-			    (nr_of_work_registers_per_thread *
-			     nr_of_threads_per_dpu) +
-			    each_thread] = flags;
+		raw_context[flags_offset + each_thread] = flags;
 	}
 
 	// 2. Load WRAM with raw context

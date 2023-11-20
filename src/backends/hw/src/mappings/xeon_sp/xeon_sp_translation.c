@@ -21,7 +21,6 @@
 #include <x86intrin.h>
 #include <immintrin.h>
 #include <sys/sysinfo.h>
-
 #include "static_verbose.h"
 
 static struct verbose_control *this_vc;
@@ -36,10 +35,6 @@ __vc()
 
 #define NB_REAL_CIS (8)
 #define NB_ELEM_MATRIX 8
-
-#define for_each_dpu_in_rank(idx, ci, dpu, nb_cis, nb_dpus_per_ci)                                                               \
-    for (dpu = 0, idx = 0; dpu < nb_dpus_per_ci; ++dpu)                                                                          \
-        for (ci = 0; ci < nb_cis; ++ci, ++idx)
 
 void
 byte_interleave(uint64_t *input, uint64_t *output)
@@ -410,6 +405,121 @@ channel_id_to_pool_id(int channel_id)
     return pool_id;
 }
 
+/**
+ * @brief Structure used as iterator over struct sg_xfer_buffer
+ */
+struct sg_xfer_buffer_iterator {
+    /** Array of pointers to block. */
+    uint8_t **blocks_addr;
+    /** Array of lengths of block. */
+    uint32_t *blocks_length;
+    /** Length of the current block. */
+    uint32_t current_block_length;
+    /** Pointer to the current block. */
+    uint8_t *current_block_addr;
+    /** Current index to read from the block. */
+    uint32_t current_block_index;
+    /** Reference to the current block pointer. */
+    uint8_t **blocks_addr_ptr;
+    /** Reference to the last block pointer. */
+    uint8_t **blocks_addr_ptr_end;
+    /** Reference to the current length. */
+    uint32_t *blocks_length_ptr;
+};
+
+static uint8_t zeros[4096] = { 0 };
+
+static inline void
+init_sg_xfer_buffer_iterator(struct sg_xfer_buffer_iterator *sg_it, struct sg_xfer_buffer *sg_buff)
+{
+    sg_it->blocks_addr = sg_buff->blocks_addr;
+    sg_it->blocks_length = sg_buff->blocks_length;
+    sg_it->blocks_addr_ptr = &sg_it->blocks_addr[0];
+    sg_it->blocks_addr_ptr_end = &sg_it->blocks_addr[sg_buff->nr_blocks];
+    sg_it->blocks_length_ptr = &sg_it->blocks_length[0];
+    sg_it->current_block_length = sg_it->blocks_length_ptr[0];
+    sg_it->current_block_addr = sg_it->blocks_addr_ptr[0];
+    sg_it->current_block_index = 0;
+
+    // zero padding
+    sg_it->blocks_length_ptr[sg_buff->nr_blocks] = 4096;
+    sg_it->blocks_addr_ptr[sg_buff->nr_blocks] = zeros;
+}
+
+static inline void
+go_to_next_block(struct sg_xfer_buffer_iterator *sg_it)
+{
+
+    sg_it->current_block_index = 0;
+    if (!(sg_it->blocks_addr_ptr_end - sg_it->blocks_addr_ptr))
+        return;
+
+    sg_it->blocks_addr_ptr++;
+    sg_it->current_block_addr = *sg_it->blocks_addr_ptr;
+
+    sg_it->blocks_length_ptr++;
+    sg_it->current_block_length = *sg_it->blocks_length_ptr;
+}
+
+static inline uint8_t *
+get_next_byte(struct sg_xfer_buffer_iterator *sg_it)
+{
+    uint8_t *byte = &sg_it->current_block_addr[sg_it->current_block_index];
+    sg_it->current_block_index++;
+    if (sg_it->current_block_index == sg_it->current_block_length) {
+        if (sg_it->blocks_addr_ptr != sg_it->blocks_addr_ptr_end) {
+            go_to_next_block(sg_it);
+        } else {
+            sg_it->current_block_index = 0;
+        }
+    }
+
+    return byte;
+}
+
+static inline void
+get_next_eight_bytes(struct sg_xfer_buffer_iterator *sg_it, uint64_t *out_buffer)
+{
+    uint32_t length = sg_it->current_block_length;
+    uint32_t current = sg_it->current_block_index;
+    if (length > 8 + current) {
+        *out_buffer = *(uint64_t *)&sg_it->current_block_addr[sg_it->current_block_index];
+        sg_it->current_block_index += 8;
+    } else if (length == 8 + current) {
+        *out_buffer = *(uint64_t *)&sg_it->current_block_addr[sg_it->current_block_index];
+        go_to_next_block(sg_it);
+    } else {
+        uint8_t *out_buffer_8 = (uint8_t *)out_buffer;
+        for (int i = 0; i < 8; i++) {
+            out_buffer_8[i] = *get_next_byte(sg_it);
+        }
+    }
+}
+
+static inline void
+write_next_eight_bytes(struct sg_xfer_buffer_iterator *sg_it, uint64_t *in_buffer)
+{
+    // if the the last block is reached,
+    // don't write to host memory
+    if (sg_it->blocks_addr_ptr == sg_it->blocks_addr_ptr_end) {
+        return;
+    }
+    uint32_t length = sg_it->current_block_length;
+    uint32_t current = sg_it->current_block_index;
+    if (length > 8 + current) {
+        *(uint64_t *)&sg_it->current_block_addr[sg_it->current_block_index] = *in_buffer;
+        sg_it->current_block_index += 8;
+    } else if (length == 8 + current) {
+        *(uint64_t *)&sg_it->current_block_addr[sg_it->current_block_index] = *in_buffer;
+        go_to_next_block(sg_it);
+    } else {
+        uint8_t *in_buffer_8 = (uint8_t *)in_buffer;
+        for (int i = 0; i < 8; i++) {
+            *get_next_byte(sg_it) = in_buffer_8[i];
+        }
+    }
+}
+
 static void
 threads_write_to_rank(struct xeon_sp_private *xeon_sp_priv, uint8_t dpu_id_start, uint8_t dpu_id_stop)
 {
@@ -419,7 +529,7 @@ threads_write_to_rank(struct xeon_sp_private *xeon_sp_priv, uint8_t dpu_id_start
     uint32_t size_transfer = xfer_matrix->size;
     uint32_t offset = xfer_matrix->offset;
 
-    nb_cis = xeon_sp_priv->tr->interleave->nb_ci;
+    nb_cis = xeon_sp_priv->tr->desc->topology.nr_of_control_interfaces;
 
     if (!size_transfer)
         return;
@@ -444,17 +554,40 @@ threads_write_to_rank(struct xeon_sp_private *xeon_sp_priv, uint8_t dpu_id_start
         if (!do_dpu_transfer)
             continue;
 
-        for (i = 0; i < size_transfer / sizeof(uint64_t); ++i) {
-            uint32_t mram_64_bit_word_offset = apply_address_translation_on_mram_offset(i * 8 + offset) / 8;
-            uint64_t next_data = BANK_OFFSET_NEXT_DATA(mram_64_bit_word_offset * sizeof(uint64_t));
-            uint64_t offset = (next_data % BANK_CHUNK_SIZE) + (next_data / BANK_CHUNK_SIZE) * BANK_NEXT_CHUNK_OFFSET;
+        if (xfer_matrix->type == DPU_SG_XFER_MATRIX) {
+            struct sg_xfer_buffer_iterator sg_it[nb_cis];
 
+            /* Initialize sg buffer iterators */
             for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
-                if (xfer_matrix->ptr[idx + ci_id])
-                    cache_line[ci_id] = *((uint64_t *)xfer_matrix->ptr[idx + ci_id] + i);
+                struct sg_xfer_buffer *sg_buff = xfer_matrix->sg_ptr[idx + ci_id];
+                if (sg_buff)
+                    init_sg_xfer_buffer_iterator(&sg_it[ci_id], sg_buff);
             }
+            for (i = 0; i < size_transfer / sizeof(uint64_t); ++i) {
+                uint32_t mram_64_bit_word_offset = apply_address_translation_on_mram_offset(i * 8 + offset) / 8;
+                uint64_t next_data = BANK_OFFSET_NEXT_DATA(mram_64_bit_word_offset * sizeof(uint64_t));
+                uint64_t offset = (next_data % BANK_CHUNK_SIZE) + (next_data / BANK_CHUNK_SIZE) * BANK_NEXT_CHUNK_OFFSET;
 
-            byte_interleave_avx512(cache_line, (uint64_t *)((uint8_t *)ptr_dest + offset), true);
+                for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
+                    if (xfer_matrix->sg_ptr[idx + ci_id])
+                        get_next_eight_bytes(&sg_it[ci_id], &cache_line[ci_id]);
+                }
+
+                byte_interleave_avx512(cache_line, (uint64_t *)((uint8_t *)ptr_dest + offset), true);
+            }
+        } else {
+            for (i = 0; i < size_transfer / sizeof(uint64_t); ++i) {
+                uint32_t mram_64_bit_word_offset = apply_address_translation_on_mram_offset(i * 8 + offset) / 8;
+                uint64_t next_data = BANK_OFFSET_NEXT_DATA(mram_64_bit_word_offset * sizeof(uint64_t));
+                uint64_t offset = (next_data % BANK_CHUNK_SIZE) + (next_data / BANK_CHUNK_SIZE) * BANK_NEXT_CHUNK_OFFSET;
+
+                for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
+                    if (xfer_matrix->ptr[idx + ci_id])
+                        cache_line[ci_id] = *((uint64_t *)xfer_matrix->ptr[idx + ci_id] + i);
+                }
+
+                byte_interleave_avx512(cache_line, (uint64_t *)((uint8_t *)ptr_dest + offset), true);
+            }
         }
 
         __builtin_ia32_mfence();
@@ -476,7 +609,7 @@ threads_read_from_rank(struct xeon_sp_private *xeon_sp_priv, uint8_t dpu_id_star
     uint32_t size_transfer = xfer_matrix->size;
     uint32_t offset = xfer_matrix->offset;
 
-    nb_cis = xeon_sp_priv->tr->interleave->nb_ci;
+    nb_cis = xeon_sp_priv->tr->desc->topology.nr_of_control_interfaces;
 
     if (!size_transfer)
         return;
@@ -512,25 +645,58 @@ threads_read_from_rank(struct xeon_sp_private *xeon_sp_priv, uint8_t dpu_id_star
 
         __builtin_ia32_mfence();
 
-        for (i = 0; i < size_transfer / sizeof(uint64_t); ++i) {
-            uint32_t mram_64_bit_word_offset = apply_address_translation_on_mram_offset(i * 8 + offset) / 8;
-            uint64_t next_data = BANK_OFFSET_NEXT_DATA(mram_64_bit_word_offset * sizeof(uint64_t));
-            uint64_t offset = (next_data % BANK_CHUNK_SIZE) + (next_data / BANK_CHUNK_SIZE) * BANK_NEXT_CHUNK_OFFSET;
+        if (xfer_matrix->type == DPU_SG_XFER_MATRIX) {
+            struct sg_xfer_buffer_iterator sg_it[nb_cis];
 
-            cache_line[0] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 0 * sizeof(uint64_t)));
-            cache_line[1] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 1 * sizeof(uint64_t)));
-            cache_line[2] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 2 * sizeof(uint64_t)));
-            cache_line[3] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 3 * sizeof(uint64_t)));
-            cache_line[4] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 4 * sizeof(uint64_t)));
-            cache_line[5] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 5 * sizeof(uint64_t)));
-            cache_line[6] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 6 * sizeof(uint64_t)));
-            cache_line[7] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 7 * sizeof(uint64_t)));
-
-            byte_interleave_avx2(cache_line, cache_line_interleave);
-
+            /* Initialize sg buffer iterators */
             for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
-                if (xfer_matrix->ptr[idx + ci_id]) {
-                    *((uint64_t *)xfer_matrix->ptr[idx + ci_id] + i) = cache_line_interleave[ci_id];
+                struct sg_xfer_buffer *sg_buff = xfer_matrix->sg_ptr[idx + ci_id];
+                if (sg_buff)
+                    init_sg_xfer_buffer_iterator(&sg_it[ci_id], sg_buff);
+            }
+
+            for (i = 0; i < size_transfer / sizeof(uint64_t); ++i) {
+                uint32_t mram_64_bit_word_offset = apply_address_translation_on_mram_offset(i * 8 + offset) / 8;
+                uint64_t next_data = BANK_OFFSET_NEXT_DATA(mram_64_bit_word_offset * sizeof(uint64_t));
+                uint64_t offset = (next_data % BANK_CHUNK_SIZE) + (next_data / BANK_CHUNK_SIZE) * BANK_NEXT_CHUNK_OFFSET;
+
+                cache_line[0] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 0 * sizeof(uint64_t)));
+                cache_line[1] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 1 * sizeof(uint64_t)));
+                cache_line[2] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 2 * sizeof(uint64_t)));
+                cache_line[3] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 3 * sizeof(uint64_t)));
+                cache_line[4] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 4 * sizeof(uint64_t)));
+                cache_line[5] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 5 * sizeof(uint64_t)));
+                cache_line[6] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 6 * sizeof(uint64_t)));
+                cache_line[7] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 7 * sizeof(uint64_t)));
+
+                byte_interleave_avx2(cache_line, cache_line_interleave);
+
+                for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
+                    if (xfer_matrix->sg_ptr[idx + ci_id] != NULL)
+                        write_next_eight_bytes(&sg_it[ci_id], &cache_line_interleave[ci_id]);
+                }
+            }
+        } else {
+            for (i = 0; i < size_transfer / sizeof(uint64_t); ++i) {
+                uint32_t mram_64_bit_word_offset = apply_address_translation_on_mram_offset(i * 8 + offset) / 8;
+                uint64_t next_data = BANK_OFFSET_NEXT_DATA(mram_64_bit_word_offset * sizeof(uint64_t));
+                uint64_t offset = (next_data % BANK_CHUNK_SIZE) + (next_data / BANK_CHUNK_SIZE) * BANK_NEXT_CHUNK_OFFSET;
+
+                cache_line[0] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 0 * sizeof(uint64_t)));
+                cache_line[1] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 1 * sizeof(uint64_t)));
+                cache_line[2] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 2 * sizeof(uint64_t)));
+                cache_line[3] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 3 * sizeof(uint64_t)));
+                cache_line[4] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 4 * sizeof(uint64_t)));
+                cache_line[5] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 5 * sizeof(uint64_t)));
+                cache_line[6] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 6 * sizeof(uint64_t)));
+                cache_line[7] = *((volatile uint64_t *)((uint8_t *)ptr_dest + offset + 7 * sizeof(uint64_t)));
+
+                byte_interleave_avx2(cache_line, cache_line_interleave);
+
+                for (ci_id = 0; ci_id < nb_cis; ++ci_id) {
+                    if (xfer_matrix->ptr[idx + ci_id]) {
+                        *((uint64_t *)xfer_matrix->ptr[idx + ci_id] + i) = cache_line_interleave[ci_id];
+                    }
                 }
             }
         }
@@ -796,7 +962,7 @@ xeon_sp_init_rank(struct dpu_region_address_translation *tr, uint8_t channel_id)
     // One pool per channel
     uint32_t pool_id = channel_id_to_pool_id(channel_id);
     struct xeon_sp_private *pool = &xeon_sp_ctx.pool[pool_id];
-    pool->nb_dpus_per_ci = tr->interleave->nb_dpus_per_ci;
+    pool->nb_dpus_per_ci = tr->desc->topology.nr_of_dpus_per_control_interface;
     pool->nb_threads = conf->nb_thread_per_pool;
     ret = pthread_barrier_init(&pool->barrier_threads, NULL, conf->nb_thread_per_pool + 1);
     if (ret)
@@ -857,14 +1023,7 @@ unlock_and_exit:
     pthread_mutex_unlock(&xeon_sp_ctx.mutex);
 }
 
-struct dpu_region_interleaving xeon_sp_interleave = {
-    .nb_ci = 8,
-    .nb_dpus_per_ci = 8,
-    .mram_size = 64 * 1024 * 1024,
-};
-
 struct dpu_region_address_translation xeon_sp_translate = {
-    .interleave = &xeon_sp_interleave,
     .backend_id = DPU_BACKEND_XEON_SP,
     .capabilities = CAP_PERF | CAP_SAFE,
     .init_rank = xeon_sp_init_rank,
