@@ -25,6 +25,7 @@
 #include <ufi/ufi_debug.h>
 #include <ufi/ufi_memory.h>
 #include <ufi/ufi_runner.h>
+#include <ufi/ufi.h>
 
 #include <dpu_rank.h>
 #include <dpu_rank_handler.h>
@@ -263,7 +264,9 @@ dpu_rank_handler_get_rank(struct dpu_rank_t *rank, dpu_rank_handler_context_t ha
         dpu_release_rank_id(rank->rank_handler_allocator_id);
         return false;
     }
+    *description = (struct _dpu_description_t) { 0 };
 
+    description->rank_handler_allocator_id = rank->rank_handler_allocator_id;
     status = handler_context->handler->fill_description_from_profile(properties, description);
     if (status != DPU_RANK_SUCCESS) {
         free(description);
@@ -494,9 +497,15 @@ set_generic_description_for_enabled_dpus(struct dpu_rank_t *rank, dpu_descriptio
     for (uint8_t each_ci = 0; each_ci < description->hw.topology.nr_of_control_interfaces; ++each_ci) {
         dpu_selected_mask_t disabled_mask_for_ci = (dpu_selected_mask_t)((disabled_mask >> (8 * each_ci)) & 0xFFl);
 
-        rank->runtime.control_interface.slice_info[each_ci].all_dpus_are_enabled = disabled_mask_for_ci == dpu_mask_empty();
-        rank->runtime.control_interface.slice_info[each_ci].enabled_dpus
-            = dpu_mask_difference(dpu_mask_all(description->hw.topology.nr_of_dpus_per_control_interface), disabled_mask_for_ci);
+        // update enabled dpus from CI mask
+        if (!(CI_MASK_ON(description->hw.topology.ci_mask, each_ci))) {
+            rank->runtime.control_interface.slice_info[each_ci].all_dpus_are_enabled = false;
+            rank->runtime.control_interface.slice_info[each_ci].enabled_dpus = 0;
+        } else {
+            rank->runtime.control_interface.slice_info[each_ci].all_dpus_are_enabled = disabled_mask_for_ci == dpu_mask_empty();
+            rank->runtime.control_interface.slice_info[each_ci].enabled_dpus = dpu_mask_difference(
+                dpu_mask_all(description->hw.topology.nr_of_dpus_per_control_interface), disabled_mask_for_ci);
+        }
     }
 
     return true;

@@ -8,19 +8,36 @@ import os
 import subprocess
 import sys
 
-"""Optimization level corresponding to '-O0'"""
 O0 = '-O0'
-"""Optimization level corresponding to '-O1'"""
+"""Optimization level corresponding to '-O0'"""
 O1 = '-O1'
-"""Optimization level corresponding to '-O2'"""
+"""Optimization level corresponding to '-O1'"""
 O2 = '-O2'
-"""Optimization level corresponding to '-O3'"""
+"""Optimization level corresponding to '-O2'"""
 O3 = '-O3'
-"""Optimization level corresponding to '-Os'"""
+"""Optimization level corresponding to '-O3'"""
 Os = '-Os'
-"""Optimization level corresponding to '-Oz'"""
+"""Optimization level corresponding to '-Os'"""
 Oz = '-Oz'
+"""Optimization level corresponding to '-Oz'"""
 
+def getDpuArchVersion(target):
+    if target is not None:
+        if target == "dpu-upmem-dpurte":
+            dpu_arch_version = os.environ.get("DPU_ARCH_VERSION")
+            if not dpu_arch_version:
+                try:
+                    with open("/sys/class/dpu_rank/dpu_rank0/dpu_chip_id", "r") as fd:
+                        dpu_chip_id = int(fd.readline())
+                        if (dpu_chip_id > 8):
+                            dpu_arch_version = "v1B"
+                except:
+                    pass
+            if not dpu_arch_version:
+                dpu_arch_version = "v1A"
+            return dpu_arch_version
+    # target can be x86
+    return None
 
 class Compiler:
     """
@@ -75,16 +92,23 @@ class Compiler:
         """
         args = [self.path]
 
+        dpu_arch_version = None
+
         if target is not None:
             args.append('--target={}'.format(target))
+            dpu_arch_version = getDpuArchVersion(target)
         elif self.target is not None:
             args.append('--target={}'.format(self.target))
+            dpu_arch_version = getDpuArchVersion(self.target)
+
+        if dpu_arch_version is not None:
+            args.append("-mcpu=" + dpu_arch_version)
 
         if opt_lvl is not None:
             args.append(opt_lvl)
 
-        if not debug:
-            args.append('-g0')
+        if debug:
+            args.append('-g')
 
         for name, value in defines.items():
             args.append('-D')

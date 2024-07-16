@@ -14,6 +14,7 @@
 
 #include <ufi_rank_utils.h>
 #include <ufi/ufi.h>
+#include <ufi/ufi_ci.h>
 #include <ufi/ufi_config.h>
 #include <ufi/ufi_bit_config.h>
 #include <ufi/ufi_dma_wavegen_config.h>
@@ -164,15 +165,17 @@ static dpu_error_t dpu_byte_order(struct dpu_rank_t *rank)
 	 * retrieved at rank allocation: the driver should not fail since nothing
 	 * can have messed with CI before itself.
 	 */
+	FF(ufi_select_cis(rank, &mask));
 	if (rank->type == HW) {
 		uint8_t nr_cis =
 			rank->description->hw.topology.nr_of_control_interfaces;
 
-		for (slice_id = 0; slice_id < nr_cis; ++slice_id)
+		for_each_ci (slice_id, nr_cis, mask) {
 			byte_order_results[slice_id] =
 				rank->runtime.control_interface
 					.slice_info[slice_id]
 					.byte_order;
+		}
 	} else {
 		FF(ufi_select_cis(rank, &mask));
 		FF(ufi_byte_order(rank, mask, byte_order_results));

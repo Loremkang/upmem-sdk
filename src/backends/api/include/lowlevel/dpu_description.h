@@ -29,6 +29,9 @@ typedef struct _dpu_description_t {
     /** Backend type for the DPU rank. */
     dpu_type_t type;
 
+    /** Rank index used at allocation time */
+    dpu_rank_id_t rank_handler_allocator_id;
+
     /** Configuration for various parameters on the DPU rank. */
     struct {
         /** Whether the MRAM accesses are to be made via DPU program and the WRAM. */

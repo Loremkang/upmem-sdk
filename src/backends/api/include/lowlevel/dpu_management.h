@@ -20,10 +20,11 @@
  * @brief Fetch the description of the given profile.
  * @param profile the profile precising configuration
  * @param description storage for the description
+ * @param rank_id rank_id of the rank
  * @return Whether the operation was successful.
  */
 dpu_error_t
-dpu_get_profile_description(const char *profile, dpu_description_t *description);
+dpu_get_profile_description(const char *profile, dpu_description_t *description, dpu_rank_id_t rank_id);
 
 /**
  * @brief Allocates a rank of DPUs.

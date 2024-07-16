@@ -50,9 +50,14 @@ else()
     set(CMAKE_C_OUTPUT_EXTENSION_REPLACE OFF)
 endif()
 
+option(BACKENDS_USE_RELATIVE_PATHS_IN_FILES "Use relative paths in generated files." ON)
+
 # Common compile flags for our libraries
 set( STRICT_COMPILE_FLAGS "-Wall -Werror -Wextra -std=gnu11" )
-set( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} ${STRICT_COMPILE_FLAGS} ${COVERAGE_FLAGS}" )
+if(BACKENDS_USE_RELATIVE_PATHS_IN_FILES)
+    set( FILE_PREFIX_FLAGS "-ffile-prefix-map=${CMAKE_CURRENT_BINARY_DIR}=backends" )
+endif()
+set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${STRICT_COMPILE_FLAGS} ${COVERAGE_FLAGS} ${FILE_PREFIX_FLAGS}" )
 set( CMAKE_C_VISIBILITY_PRESET hidden )
 
 SET(CMAKE_EXE_LINKER_FLAGS "-Wl,--enable-new-dtags")

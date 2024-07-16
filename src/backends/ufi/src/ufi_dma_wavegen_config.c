@@ -43,7 +43,7 @@ __API_SYMBOL__ const struct dpu_wavegen_config waveform_generator_clock_div2_con
     .DRAOB    = { .rise = 0x31, .fall = 0x39, .counter_enable = 0x03, .counter_disable = 0x04 },
     .DWBSB_EN = { .rise = 0x3C, .fall = 0x3E, .counter_enable = 0x01, .counter_disable = 0x03 },
     .vector_sampling = { .rab_gross = 0x01, .cat_gross = 0x01, .dwbsb_gross = 0x01, .drbsb_gross = 0x01, .drbsb_fine = 0x02 },
-    .timing_completion = {.activate = 0x0A, .read = 0x03, .write = 0x03, .precharge = 0x0B,
+    .timing_completion = {.activate = 0x09, .read = 0x03, .write = 0x03, .precharge = 0x0B,
         /* refresh_start, refresh_activ, refresh_prech, refresh_end computed later depending on frequency */
         },
     /* refresh_and_row_hammer_info computed later depending on frequency */

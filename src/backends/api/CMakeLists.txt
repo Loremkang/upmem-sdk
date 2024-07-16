@@ -9,7 +9,7 @@ cmake_policy(SET CMP0048 NEW)
 find_package(JNI REQUIRED)
 find_package(Threads REQUIRED)
 find_package(LibElf REQUIRED)
-find_package(Python3 COMPONENTS Development REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Development)
 find_package(LibNuma REQUIRED)
 
 set( JAVA_HEADERS "${JAVA_INCLUDE_PATH}" "${JAVA_INCLUDE_PATH2}" )

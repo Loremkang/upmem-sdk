@@ -12,6 +12,15 @@
 
 #include <ufi/ufi_ci_types.h>
 
+#define CI_MASK_ONE(ci) (1u << (ci))
+u8 ufi_next_ci(u8 ci_mask, u8 current_ci, u8 nr_cis);
+
+#define for_each_ci(i, nr_cis, mask)                                           \
+	for (i = ufi_next_ci(mask, -1, nr_cis); i < nr_cis;                    \
+	     i = ufi_next_ci(mask, i, nr_cis))
+
+u32 ufi_select_cis(struct dpu_rank_t *rank, u8 *ci_mask);
+
 #define TIMEOUT_COLOR (100000)
 
 void ci_prepare_mask(u64 *buffer, u8 mask, u64 data);
@@ -29,6 +38,6 @@ u32 ci_exec_32bit_cmd(struct dpu_rank_t *rank, u64 *commands, u32 *results);
 u32 ci_exec_void_cmd(struct dpu_rank_t *rank, u64 *commands);
 u32 ci_exec_wait_mask_cmd(struct dpu_rank_t *rank, u64 *commands);
 
-u32 ci_get_color(struct dpu_rank_t *rank, uint32_t *ret_data);
+u32 ci_get_color(struct dpu_rank_t *rank, uint32_t *ret_data, uint8_t ci_mask);
 
 #endif /* __CI_H__ */

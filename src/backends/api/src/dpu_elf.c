@@ -180,6 +180,40 @@ read_symbol_value(GElf_Sym symbol, uint32_t *value, uint32_t *size)
 }
 
 static dpu_error_t
+read_chip_version(elf_fd info)
+{
+    Elf_Scn *scn = elf_getscn(info->elf, info->dpu_attributes_index);
+    Elf_Data *dpu_attr = elf_getdata(scn, NULL);
+    if (dpu_attr == NULL) {
+        report_error("file corrupted: could not read DPU attributes\n");
+        report_error(elf_errmsg(elf_errno()));
+        return DPU_ERR_ELF_INVALID_FILE;
+    }
+
+    /* TODO: use better parser for attributes */
+    char *buf = (char *)dpu_attr->d_buf;
+    size_t offset = 0;
+
+    /* skip until first COH character and skip word */
+    while (offset < dpu_attr->d_size && buf[offset] != '\001') {
+        offset++;
+    }
+    offset += strlen(buf + offset) + 1;
+
+    /* skip until non-null character */
+    while ((offset < dpu_attr->d_size) && (buf[offset] == '\0')) {
+        offset++;
+    }
+
+    /* skip one more because there is an \5 (enquiry) char */
+    offset++;
+
+    info->chip_version = strdup(buf + offset);
+
+    return DPU_OK;
+}
+
+static dpu_error_t
 setup_symbols_map(elf_fd info)
 {
     dpu_error_t err = DPU_OK;
@@ -265,6 +299,8 @@ clear_elf_fd(elf_fd info)
     info->shnum = 0;
     info->symtab_index = (unsigned int)(-1);
     info->strtab_index = (unsigned int)(-1);
+    info->dpu_attributes_index = (unsigned int)(-1);
+    info->chip_version = NULL;
     info->symbol_maps = NULL;
     info->filename = NULL;
 }
@@ -299,6 +335,20 @@ setup_elf_info(const char *path, elf_fd info, bool is_based_on_file)
         return err;
 
     report("strtab index = %u\n", info->strtab_index);
+
+    report("locating '.dpu.attributes'\n");
+    err = locate_index_of_section_called(".dpu.attributes", info, &(info->dpu_attributes_index));
+    if (err != DPU_OK)
+        return err;
+
+    report("dpu.attributes index = %u\n", info->dpu_attributes_index);
+
+    report("loading chip version\n");
+    err = read_chip_version(info);
+    if (err != DPU_OK)
+        return err;
+
+    report("chip version = %s\n", info->chip_version);
 
     report("loading symbol map\n");
     err = setup_symbols_map(info);
@@ -429,6 +479,9 @@ dpu_elf_close(dpu_elf_file_t file)
     }
     if (info->fd != -1) {
         (void)close(info->fd);
+    }
+    if (info->chip_version != NULL) {
+        free(info->chip_version);
     }
     if (info->filename != NULL) {
         free(info->filename);

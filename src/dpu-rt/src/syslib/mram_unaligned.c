@@ -9,7 +9,7 @@
 
 VMUTEX_INIT(__mram_unaligned_access_virtual_locks, 1 << __MRAM_UNALIGNED_ACCESS_LOG_NB_VLOCK, 1);
 
-__attribute((used)) __dma_aligned uint8_t __mram_unaligned_access_buffer[NR_THREADS << 3];
+__attribute((used)) __dma_aligned uint8_t __mram_unaligned_access_buffer[DPU_NR_THREADS << 3];
 
 void *
 mram_read_unaligned(const __mram_ptr void *from, void *buffer, unsigned int nb_of_bytes)

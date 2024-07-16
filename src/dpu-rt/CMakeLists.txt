@@ -240,7 +240,7 @@ set(ALL_SOURCES ${STDLIB_C_SOURCES} ${SYSLIB_C_SOURCES})
 set(INCLUDE_DIRECTORIES ${STDLIB_DIR} ${SYSLIB_DIR})
 
 function(add_dpu_library)
-    cmake_parse_arguments(DPU_LIB "PROFILING;LTO;LTO_THIN" "TARGET" "SOURCES" ${ARGN})
+    cmake_parse_arguments(DPU_LIB "PROFILING;LTO;LTO_THIN" "TARGET;CHIP" "SOURCES" ${ARGN})
     set(OTHER_FLAGS "")
 
     if (DPU_LIB_PROFILING)
@@ -255,6 +255,8 @@ function(add_dpu_library)
         set(OTHER_FLAGS ${OTHER_FLAGS} ${COMPILE_LTO_THIN_FLAGS})
     endif()
 
+    set(OTHER_FLAGS ${OTHER_FLAGS} -mcpu=${DPU_LIB_CHIP})
+
     add_library(${DPU_LIB_TARGET} STATIC "${DPU_LIB_SOURCES}")
     target_include_directories(${DPU_LIB_TARGET} PRIVATE ${INCLUDE_DIRECTORIES})
 
@@ -263,23 +265,37 @@ function(add_dpu_library)
     install(
         TARGETS ${DPU_LIB_TARGET}
         ARCHIVE
-        DESTINATION share/upmem/include/built-in
+        DESTINATION share/upmem/include/built-in/${DPU_LIB_CHIP}
         )
 endfunction()
 
-add_dpu_library(TARGET rt                             SOURCES ${ALL_SOURCES})
-add_dpu_library(TARGET rt_p                 PROFILING SOURCES ${ALL_SOURCES})
-add_dpu_library(TARGET rtlto       LTO                SOURCES ${ALL_SOURCES})
-add_dpu_library(TARGET rtlto_p     LTO      PROFILING SOURCES ${ALL_SOURCES})
-add_dpu_library(TARGET rtltothin   LTO_THIN           SOURCES ${ALL_SOURCES})
-add_dpu_library(TARGET rtltothin_p LTO_THIN PROFILING SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rt_v1A                             CHIP v1A SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rt_p_v1A                 PROFILING CHIP v1A SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtlto_v1A       LTO                CHIP v1A SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtlto_p_v1A     LTO      PROFILING CHIP v1A SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtltothin_v1A   LTO_THIN           CHIP v1A SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtltothin_p_v1A LTO_THIN PROFILING CHIP v1A SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rt_v1B                             CHIP v1B SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rt_p_v1B                 PROFILING CHIP v1B SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtlto_v1B       LTO                CHIP v1B SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtlto_p_v1B     LTO      PROFILING CHIP v1B SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtltothin_v1B   LTO_THIN           CHIP v1B SOURCES ${ALL_SOURCES})
+add_dpu_library(TARGET rtltothin_p_v1B LTO_THIN PROFILING CHIP v1B SOURCES ${ALL_SOURCES})
 
-add_library(rtmcount STATIC ${SYSLIB_DIR}/mcount.c)
-target_compile_options(rtmcount PRIVATE ${NOSTDLIB_FLAGS} ${STRICT_FLAGS} ${COMPILER_TIMESTAMP_DEF})
+add_library(rtmcount_v1A STATIC ${SYSLIB_DIR}/mcount.c)
+target_compile_options(rtmcount_v1A PRIVATE ${NOSTDLIB_FLAGS} ${STRICT_FLAGS} ${COMPILER_TIMESTAMP_DEF} -mcpu=v1A)
 install(
-    TARGETS rtmcount
+    TARGETS rtmcount_v1A
     ARCHIVE
-    DESTINATION share/upmem/include/built-in
+    DESTINATION share/upmem/include/built-in/v1A
+    )
+
+add_library(rtmcount_v1B STATIC ${SYSLIB_DIR}/mcount.c)
+target_compile_options(rtmcount_v1B PRIVATE ${NOSTDLIB_FLAGS} ${STRICT_FLAGS} ${COMPILER_TIMESTAMP_DEF} -mcpu=v1B)
+install(
+    TARGETS rtmcount_v1B
+    ARCHIVE
+    DESTINATION share/upmem/include/built-in/v1B
     )
 
 install(

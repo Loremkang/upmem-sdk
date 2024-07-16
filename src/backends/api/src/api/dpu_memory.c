@@ -454,12 +454,13 @@ free_cb_args(struct sg_xfer_callback_args *args)
     }
     pthread_mutex_unlock(&freeing_refcpt_mutex);
 }
+
 __PERF_PROFILING_SYMBOL__ dpu_error_t
 sg_xfer_rank_handler(struct dpu_set_t rank, __attribute((unused)) uint32_t rank_id, void *cb_args)
 {
     struct dpu_set_t dpu;
     struct sg_block_info binfo;
-    dpu_error_t status;
+    dpu_error_t status = DPU_OK;
     struct dpu_transfer_matrix transfer_matrix;
 
     // retreive arguments of the rank
@@ -485,8 +486,10 @@ sg_xfer_rank_handler(struct dpu_set_t rank, __attribute((unused)) uint32_t rank_
 
     bool check_length = ((args->flags & DPU_SG_XFER_DISABLE_LENGTH_CHECK) == 0);
 
-    if (!dpu_get_as_rank_t(rank)->api.sg_xfer_enabled)
-        return DPU_ERR_SG_NOT_ACTIVATED;
+    if (!dpu_get_as_rank_t(rank)->api.sg_xfer_enabled) {
+        status = DPU_ERR_SG_NOT_ACTIVATED;
+        goto end;
+    }
 
     // add each block of each DPU
     DPU_FOREACH (rank, dpu, rank_dpu_index) {
@@ -503,18 +506,24 @@ sg_xfer_rank_handler(struct dpu_set_t rank, __attribute((unused)) uint32_t rank_
 
             if (block_exists) {
                 // the number of blocks exceed the capacity of the sg buffer pool
-                if (block_index >= dpu_sg_buffer_pool_max_nr_blocks)
-                    return DPU_ERR_SG_TOO_MANY_BLOCKS;
+                if (block_index >= dpu_sg_buffer_pool_max_nr_blocks) {
+                    status = DPU_ERR_SG_TOO_MANY_BLOCKS;
+                    goto end;
+                }
                 // if DPU_SG_XFER_DISABLE_LENGTH_CHECK is provided, sending more bytes than "length" is authorized
-                if (binfo.length && (check_length && dpu_nr_bytes_to_transfer >= args->length))
-                    return DPU_ERR_SG_LENGTH_MISMATCH;
+                if (binfo.length && (check_length && dpu_nr_bytes_to_transfer >= args->length)) {
+                    status = DPU_ERR_SG_LENGTH_MISMATCH;
+                    goto end;
+                }
             }
             // no more block to add for this DPU
             else {
                 // the precedent block was the last one, so we can check the number of bytes to be send for this DPU
                 // if DPU_SG_XFER_DISABLE_LENGTH_CHECK is not provided, the number of bytes must be equal to length
-                if (check_length && dpu_nr_bytes_to_transfer != args->length)
-                    return DPU_ERR_SG_LENGTH_MISMATCH;
+                if (check_length && dpu_nr_bytes_to_transfer != args->length) {
+                    status = DPU_ERR_SG_LENGTH_MISMATCH;
+                    goto end;
+                }
 
                 block_index = 0;
                 break;
@@ -535,10 +544,11 @@ sg_xfer_rank_handler(struct dpu_set_t rank, __attribute((unused)) uint32_t rank_
                         // add the new block to the transfer matrix
                         if ((status = dpu_transfer_matrix_add_dpu_block(dpu.dpu, &transfer_matrix, binfo.addr, binfo.length))
                             != DPU_OK)
-                            return status;
+                            goto end;
                         break;
                     default:
-                        return DPU_ERR_INVALID_MEMORY_TRANSFER;
+                        status = DPU_ERR_INVALID_MEMORY_TRANSFER;
+                        goto end;
                 }
             }
 
@@ -550,23 +560,25 @@ sg_xfer_rank_handler(struct dpu_set_t rank, __attribute((unused)) uint32_t rank_
     switch (xfer) {
         case DPU_XFER_TO_DPU:
             if ((status = dpu_copy_to_mrams(dpu_get_as_rank_t(rank), &transfer_matrix)) != DPU_OK)
-                return status;
+                goto end;
             break;
         case DPU_XFER_FROM_DPU:
             if ((status = dpu_copy_from_mrams(dpu_get_as_rank_t(rank), &transfer_matrix)) != DPU_OK)
-                return status;
+                goto end;
             break;
         default:
-            return DPU_ERR_INVALID_MEMORY_TRANSFER;
+            status = DPU_ERR_INVALID_MEMORY_TRANSFER;
+            goto end;
     }
 
+end:
     // reset the scatter gather buffer pool
     reset_sg_buffer_pool(rank, sg_buffer_pool);
 
     // freeing the callback arguments
     free_cb_args(args);
 
-    return DPU_OK;
+    return status;
 }
 
 __API_SYMBOL__ dpu_error_t

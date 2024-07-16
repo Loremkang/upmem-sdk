@@ -1224,79 +1224,79 @@ try:
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 4
+# vpd/src/dpu_flash_partition.h: 7
 try:
     FLASH_BASE_ADDRESS = 0x08000000
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 5
+# vpd/src/dpu_flash_partition.h: 8
 try:
     FLASH_SIZE = 0x20000
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 7
+# vpd/src/dpu_flash_partition.h: 10
 try:
     FLASH_OFF_RO = 0x0
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 8
+# vpd/src/dpu_flash_partition.h: 11
 try:
     FLASH_OFF_RW = 0xF000
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 9
+# vpd/src/dpu_flash_partition.h: 12
 try:
     FLASH_OFF_VPD = 0x1E000
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 10
+# vpd/src/dpu_flash_partition.h: 13
 try:
     FLASH_OFF_VPD_DB = 0x1E800
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 11
+# vpd/src/dpu_flash_partition.h: 14
 try:
     FLASH_OFF_SPD = 0x1F800
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 14
+# vpd/src/dpu_flash_partition.h: 17
 try:
     FLASH_SIZE_RO_RW = (FLASH_OFF_VPD - FLASH_OFF_RO)
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 15
+# vpd/src/dpu_flash_partition.h: 18
 try:
     FLASH_SIZE_RO = (FLASH_OFF_RW - FLASH_OFF_RO)
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 16
+# vpd/src/dpu_flash_partition.h: 19
 try:
     FLASH_SIZE_RW = (FLASH_OFF_VPD - FLASH_OFF_RW)
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 17
+# vpd/src/dpu_flash_partition.h: 20
 try:
     FLASH_SIZE_VPD = (FLASH_OFF_VPD_DB - FLASH_OFF_VPD)
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 18
+# vpd/src/dpu_flash_partition.h: 21
 try:
     FLASH_SIZE_VPD_DB = (FLASH_OFF_SPD - FLASH_OFF_VPD_DB)
 except BaseException:
     pass
 
-# vpd/src/dpu_flash_partition.h: 19
+# vpd/src/dpu_flash_partition.h: 22
 try:
     FLASH_SIZE_SPD = (FLASH_SIZE - FLASH_OFF_SPD)
 except BaseException:

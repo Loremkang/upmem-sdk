@@ -7,6 +7,8 @@
  * The strict minimum to reset the internal state of the DPU (that can only be changed by a DPU program).
  */
 
+#include <dpu_characteristics.h>
+
 #define __STR(x) __STR_AGAIN(x)
 #define __STR_AGAIN(x) #x
 
@@ -18,7 +20,7 @@ void __attribute__((naked, used, section(".text.__bootstrap"))) __bootstrap()
     /* clang-format off */
     __asm__ volatile(
         "  jgtu id, " __STR(NR_THREADS_TO_RESET_ATOMIC_BITS) " - 1, reset_flags\n"
-        "  sub r0, " __STR(NR_ATOMIC_BITS) " - 1, id\n"
+        "  sub r0, " __STR(DPU_NR_ATOMIC_BITS) " - 1, id\n"
         "before_release:\n"
         // Resetting Atomic bits
         "  release r0, 0, nz, after_release\n"

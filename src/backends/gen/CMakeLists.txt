@@ -4,7 +4,7 @@
 
 cmake_minimum_required(VERSION 3.13)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Python3 REQUIRED)
 
 set(GEN_INCLUDE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include)
 set(GEN_INCLUDE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include PARENT_SCOPE)

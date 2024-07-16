@@ -98,8 +98,10 @@ typedef enum dpu_error_t {
     DPU_ERR_SG_NOT_ACTIVATED,
     /** Error returned when scatter gather transfer symbol is not a MRAM symbol */
     DPU_ERR_SG_NOT_MRAM_SYMBOL,
-    /** Error returned if one sg xfer is launched and the sg buffer pool has not been initialized */
-    DPU_ERR_ASYNC_JOBS = 1U << 31,
+    /** Error returned when something wrong occured in the jobs async queue
+     * Unlike the other errors, this one is a bitfield, and can be combined with other errors.
+     * Cast to an int because enums have signed integer range, and we want to be able to use the bit 31. */
+    DPU_ERR_ASYNC_JOBS = (int)(1U << 31),
 } dpu_error_t;
 
 /**

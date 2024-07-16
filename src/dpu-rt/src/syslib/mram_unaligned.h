@@ -31,7 +31,7 @@ extern struct vmutex __mram_unaligned_access_virtual_locks;
  * One buffer per tasklet of 8 bytes.
  * Used to store MRAM 8 byte word before write.
  */
-extern __dma_aligned uint8_t __mram_unaligned_access_buffer[NR_THREADS << 3];
+extern __dma_aligned uint8_t __mram_unaligned_access_buffer[DPU_NR_THREADS << 3];
 
 /**
  * @fn mram_read_unaligned

@@ -1,3 +1,6 @@
+/* THIS FILE WAS COPIED FROM ANOTHER LOCATION.
+ * DO NOT EDIT - YOUR CHANGES WILL BE LOST.
+ */
 /* Copyright 2021 UPMEM. All rights reserved.
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -14,6 +17,8 @@
  */
 
 #include <stdint.h>
+
+#include <dpu_characteristics.h>
 
 #ifndef NR_THREADS
 #ifdef DPU_NR_THREADS

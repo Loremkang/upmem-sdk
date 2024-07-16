@@ -820,6 +820,9 @@ hw_fill_description_from_profile(dpu_properties_t properties, dpu_description_t 
     uint8_t chip_id, capabilities_mode;
     bool bypass_module_compatibility;
 
+    /*Need to keep the rank_id value because fill_description_with_default_values_for will fill description with default values */
+    dpu_rank_id_t rank_handler_allocator_id = description->rank_handler_allocator_id;
+
     parameters = malloc(sizeof(*parameters));
     if (!parameters) {
         return DPU_RANK_SYSTEM_ERROR;
@@ -831,7 +834,10 @@ hw_fill_description_from_profile(dpu_properties_t properties, dpu_description_t 
         return DPU_RANK_SYSTEM_ERROR;
     }
 
+    /*Restore the parameter rank_handler_allocator_id with the rank_id*/
     validate(fill_description_with_default_values_for((dpu_chip_id_e)chip_id, description));
+
+    description->rank_handler_allocator_id = rank_handler_allocator_id;
 
     ret = dpu_sysfs_get_hardware_description(description, &capabilities_mode);
     if (ret == -1) {

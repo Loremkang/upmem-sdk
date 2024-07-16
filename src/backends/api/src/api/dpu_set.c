@@ -226,8 +226,62 @@ unlock_mutex:
     return status;
 }
 
+dpu_error_t
+init_scatter_gather_transfer_buffer(const char *profile, struct dpu_set_t *dpu_set)
+{
+    uint32_t nr_dpus;
+
+    dpu_error_t status = DPU_OK;
+
+    dpu_get_nr_dpus(*dpu_set, &nr_dpus);
+
+    // alloc scatter gather buffer pool
+    bool dpu_sg_xfer_enabled = false;
+    uint32_t dpu_sg_xfer_max_block_per_dpu = 0;
+    dpu_properties_t properties = dpu_properties_load_from_profile(profile);
+    if (!fetch_boolean_property(properties, DPU_PROFILE_PROPERTY_SG_XFER_ENABLE, &dpu_sg_xfer_enabled, false)) {
+        status = DPU_ERR_INVALID_PROFILE;
+        goto end;
+    }
+
+    if (!fetch_integer_property(properties, DPU_PROFILE_PROPERTY_SG_XFER_MAX_BLOCKS_PER_DPU, &dpu_sg_xfer_max_block_per_dpu, 0)) {
+        status = DPU_ERR_INVALID_PROFILE;
+        goto end;
+    }
+
+    if (!dpu_sg_xfer_enabled && dpu_sg_xfer_max_block_per_dpu > 0) {
+        status = DPU_ERR_INVALID_PROFILE;
+        goto end;
+    }
+
+    // set rank sg xfer enable
+    for (uint32_t each_rank = 0; each_rank < dpu_set->list.nr_ranks; ++each_rank)
+        dpu_set->list.ranks[each_rank]->api.sg_xfer_enabled = dpu_sg_xfer_enabled;
+
+    if (dpu_sg_xfer_enabled) {
+        if ((status
+                = sg_buffer_pool_create(*dpu_set, (dpu_sg_xfer_max_block_per_dpu > 0) ? dpu_sg_xfer_max_block_per_dpu : nr_dpus))
+            != DPU_OK) {
+            goto end;
+        }
+    }
+
+    // fill dpu_rank_offset structure
+    nr_dpus = 0;
+    for (uint32_t each_rank = 0; each_rank < dpu_set->list.nr_ranks; ++each_rank) {
+        struct dpu_rank_t *rank = dpu_set->list.ranks[each_rank];
+        dpu_set->list.ranks[each_rank]->dpu_offset = nr_dpus;
+        nr_dpus += get_nr_of_dpus_in_rank(rank);
+    }
+
+end:
+    dpu_properties_delete(properties);
+
+    return status;
+}
+
 static dpu_error_t
-init_dpu_set(struct dpu_rank_t **ranks, uint32_t nr_ranks, struct dpu_set_t *dpu_set)
+init_dpu_set(struct dpu_rank_t **ranks, uint32_t nr_ranks, struct dpu_set_t *dpu_set, const char *profile)
 {
     dpu_error_t status;
 
@@ -237,6 +291,10 @@ init_dpu_set(struct dpu_rank_t **ranks, uint32_t nr_ranks, struct dpu_set_t *dpu
     dpu_set->kind = DPU_SET_RANKS;
     dpu_set->list.nr_ranks = nr_ranks;
     dpu_set->list.ranks = ranks;
+
+    if ((status = init_scatter_gather_transfer_buffer(profile, dpu_set)) != DPU_OK) {
+        goto end;
+    }
 
     if ((status = dpu_thread_job_create(ranks, nr_ranks)) != DPU_OK) {
         goto end;
@@ -330,57 +388,6 @@ disable_unused_dpus(uint32_t current_nr_of_dpus, uint32_t nr_dpus, struct dpu_ra
     return DPU_OK;
 }
 
-dpu_error_t
-init_scatter_gather_transfer_buffer(uint32_t nr_dpus, const char *profile, struct dpu_set_t *dpu_set)
-{
-    dpu_error_t status = DPU_OK;
-
-    // alloc scatter gather buffer pool
-    {
-        bool dpu_sg_xfer_enabled = false;
-        uint32_t dpu_sg_xfer_max_block_per_dpu = 0;
-        dpu_properties_t properties = dpu_properties_load_from_profile(profile);
-        if (!fetch_boolean_property(properties, DPU_PROFILE_PROPERTY_SG_XFER_ENABLE, &dpu_sg_xfer_enabled, false)) {
-            return DPU_ERR_INVALID_PROFILE;
-        }
-
-        if (!fetch_integer_property(
-                properties, DPU_PROFILE_PROPERTY_SG_XFER_MAX_BLOCKS_PER_DPU, &dpu_sg_xfer_max_block_per_dpu, 0)) {
-            return DPU_ERR_INVALID_PROFILE;
-        }
-
-        if (!dpu_sg_xfer_enabled && dpu_sg_xfer_max_block_per_dpu > 0) {
-            return DPU_ERR_INVALID_PROFILE;
-        }
-
-        // set rank sg xfer enable
-        for (uint32_t each_rank = 0; each_rank < dpu_set->list.nr_ranks; ++each_rank)
-            dpu_set->list.ranks[each_rank]->api.sg_xfer_enabled = dpu_sg_xfer_enabled;
-
-        if (dpu_sg_xfer_enabled) {
-            if ((status = sg_buffer_pool_create(
-                     *dpu_set, (dpu_sg_xfer_max_block_per_dpu > 0) ? dpu_sg_xfer_max_block_per_dpu : nr_dpus))
-                != DPU_OK) {
-                return status;
-            }
-        }
-
-        dpu_properties_delete(properties);
-    }
-
-    // fill dpu_rank_offset structure
-    {
-        uint32_t nr_dpus = 0;
-        for (uint32_t each_rank = 0; each_rank < dpu_set->list.nr_ranks; ++each_rank) {
-            struct dpu_rank_t *rank = dpu_set->list.ranks[each_rank];
-            dpu_set->list.ranks[each_rank]->dpu_offset = nr_dpus;
-            nr_dpus += get_nr_of_dpus_in_rank(rank);
-        }
-    }
-
-    return DPU_OK;
-}
-
 __API_SYMBOL__ dpu_error_t
 dpu_alloc(uint32_t nr_dpus, const char *profile, struct dpu_set_t *dpu_set)
 {
@@ -464,11 +471,7 @@ dpu_alloc(uint32_t nr_dpus, const char *profile, struct dpu_set_t *dpu_set)
         goto error_free_ranks;
     }
 
-    if ((status = init_dpu_set(current_ranks, current_nr_of_ranks, dpu_set)) != DPU_OK) {
-        goto error_free_ranks;
-    }
-
-    if ((status = init_scatter_gather_transfer_buffer(nr_dpus, profile, dpu_set)) != DPU_OK) {
+    if ((status = init_dpu_set(current_ranks, current_nr_of_ranks, dpu_set, profile)) != DPU_OK) {
         goto error_free_ranks;
     }
 
@@ -520,14 +523,7 @@ dpu_alloc_ranks(uint32_t nr_ranks, const char *profile, struct dpu_set_t *dpu_se
         }
     }
 
-    if ((status = init_dpu_set(ranks, nr_ranks, dpu_set)) != DPU_OK) {
-        goto free_ranks;
-    }
-
-    uint32_t nr_dpus;
-    dpu_get_nr_dpus(*dpu_set, &nr_dpus);
-
-    if ((status = init_scatter_gather_transfer_buffer(nr_dpus, profile, dpu_set)) != DPU_OK) {
+    if ((status = init_dpu_set(ranks, nr_ranks, dpu_set, profile)) != DPU_OK) {
         goto free_ranks;
     }
 

@@ -31,6 +31,22 @@ determine_if_commands_are_finished(struct dpu_rank_t *rank, const u64 *data,
 				   u8 expected_color, bool *is_done);
 
 static void log_temperature(struct dpu_rank_t *rank, u64 *results);
+/**
+ * @brief return the index of the next valid CIs
+ * 
+ * @param ci_mask ci mask which represents valid CIs
+ * @param current_ci current CI index
+ * @param nr_cis number of CI per rank
+ * @return __API_SYMBOL__ 
+ */
+__API_SYMBOL__ u8 ufi_next_ci(u8 ci_mask, u8 current_ci, u8 nr_cis)
+{
+	do {
+		current_ci++;
+	} while ((current_ci < nr_cis) && !CI_MASK_ON(ci_mask, current_ci));
+
+	return current_ci;
+}
 
 __API_SYMBOL__ u32 ci_commit_commands(struct dpu_rank_t *rank, u64 *commands)
 {
@@ -268,10 +284,10 @@ static u32 exec_cmd(struct dpu_rank_t *rank, u64 *commands,
 		    bool add_select_mask)
 {
 	u8 expected_color;
-	u64 result_masks[DPU_MAX_NR_CIS] = {};
-	u64 expected[DPU_MAX_NR_CIS] = {};
+	u64 result_masks[DPU_MAX_NR_CIS] = { 0 };
+	u64 expected[DPU_MAX_NR_CIS] = { 0 };
 	u64 *data = rank->data;
-	bool is_done[DPU_MAX_NR_CIS] = {};
+	bool is_done[DPU_MAX_NR_CIS] = { 0 };
 	u8 ci_mask;
 	u32 status;
 	bool in_progress, timeout;
@@ -315,7 +331,7 @@ static u32 exec_cmd(struct dpu_rank_t *rank, u64 *commands,
 		return DPU_ERR_TIMEOUT;
 	}
 
-	if (!is_chip_v1_4(rank)) {
+	if (1) {
 		/* All results are ready here, and still present when reading the control interfaces.
 		 * We make sure that we have the correct results by reading again (we may have timing issues).
 		 * todo(#85): this can be somewhat costly. We should try to integrate this additional read in a lower layer.
@@ -507,7 +523,7 @@ static void log_temperature(struct dpu_rank_t *rank, u64 *results)
 	}
 }
 
-u32 ci_get_color(struct dpu_rank_t *rank, u32 *ret_data)
+u32 ci_get_color(struct dpu_rank_t *rank, uint32_t *ret_data, uint8_t ci_mask)
 {
 	u8 nr_cis = GET_DESC_HW(rank)->topology.nr_of_control_interfaces;
 	u64 data[DPU_MAX_NR_CIS];
@@ -531,79 +547,37 @@ u32 ci_get_color(struct dpu_rank_t *rank, u32 *ret_data)
 	 * between the moment we see [39: 32] == 0xFF and particular commands get their whole result in [31: 0]
 	 * => so once [39: 32] == 0xFF, we re-read the result to make sure it is ok.
 	 */
-	do {
-		FF(ci_update_commands(rank, data));
 
-		timeout--;
-
-		result_is_stable = true;
-		for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
-			u8 cmd_type = (u8)(((data[each_slice] &
-					     0xFF00000000000000ULL) >>
-					    56) &
-					   0xFF);
-			if (cmd_type == 0xFF) {
-				dummy_command_is_needed = true;
-			} else {
-				u8 valid = (u8)(((data[each_slice] &
-						  0xFF00000000ULL) >>
-						 32) &
-						0xFF);
-				result_is_stable = result_is_stable &&
-						   (cmd_type == 0) &&
-						   (valid == 0xFF);
-			}
-		}
-	} while (timeout && !result_is_stable);
-
-	if (!timeout) {
-		LOG_RANK(WARNING, rank,
-			 "Timeout waiting for result to be correct");
-		status = DPU_ERR_TIMEOUT;
-		goto end;
-	}
-
-	FF(ci_update_commands(rank, data));
-
-	if (ret_data) {
-		for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
-			ret_data[each_slice] = (u32)(data[each_slice]);
-		}
-	}
-
-	if (dummy_command_is_needed) {
-		for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
-			if (((data[each_slice] >> 56) & 0xFF) == 0xFF) {
-				LOG_CI(VERBOSE, rank, each_slice,
-				       "Nop command, must execute dummy command to get the right color...");
-				/* To avoid stuttering here, just send twice a byte order command with [63: 56] shuffled
-				 * and send an identity command and wait for the result to get the color.
-				 */
-				// TODO
-				/* And simply commit an identity command to get the right color: we must
-				 * bypass UFI that requires the color. The timeout is needed for the same
-				 * reason as above.
-				 */
-				data[each_slice] = CI_IDENTITY;
-			} else {
-				data[each_slice] = CI_EMPTY;
-			}
-		}
-
-		FF(ci_commit_commands(rank, data));
-
-		timeout = TIMEOUT_COLOR;
+	/*
+	 * For V1.3 PIM, When we send a CI_EMPTY command, The control interfaces return the result of the previous command (method to retrieve the color)
+	 * 			-> So we expect the bits [39 32] to be set (Previous command well interpreted by the CIs)
+	 * For V1.4 PIM, When we send a CI_EMPTY command, The control interfaces send back the CI_EMPTY command
+	 * 			-> So the bits [39 32] are  never equal to 0xFF, this leads to a timeout error
+	 *
+	 * With this new behavior for V1.4 PIM, we need to by pass the check below which checks if the command
+	 * is terminated (bits[39 32] == 0xFF) but keep this procedure for V1.3 PIM
+	*/
+	if (!is_chip_v1_4(rank)) {
 		do {
 			FF(ci_update_commands(rank, data));
-
 			timeout--;
-
 			result_is_stable = true;
-			for (each_slice = 0; each_slice < nr_cis;
-			     ++each_slice) {
-				result_is_stable =
-					result_is_stable &&
-					((data[each_slice] >> 56) == 0);
+			for_each_ci (each_slice, nr_cis, ci_mask) {
+				u8 cmd_type = (u8)(((data[each_slice] &
+						     0xFF00000000000000ULL) >>
+						    56) &
+						   0xFF);
+				if (cmd_type == 0xFF) {
+					dummy_command_is_needed = true;
+				} else {
+					u8 valid = (u8)(((data[each_slice] &
+							  0xFF00000000ULL) >>
+							 32) &
+							0xFF);
+					result_is_stable = result_is_stable &&
+							   (cmd_type == 0) &&
+							   (valid == 0xFF);
+				}
 			}
 		} while (timeout && !result_is_stable);
 
@@ -615,8 +589,71 @@ u32 ci_get_color(struct dpu_rank_t *rank, u32 *ret_data)
 		}
 	}
 
+	FF(ci_update_commands(rank, data));
+
+	if (ret_data) {
+		for_each_ci (each_slice, nr_cis, ci_mask) {
+			ret_data[each_slice] = (u32)(data[each_slice]);
+		}
+	}
+	/* For V1.4 PIM: We have to bypass the following part since sending a CI_EMPTY command overwrites the CIs and we loose color context
+	*/
+	if (!is_chip_v1_4(rank)) {
+		if (dummy_command_is_needed) {
+			for_each_ci (each_slice, nr_cis, ci_mask) {
+				if (((data[each_slice] >> 56) & 0xFF) == 0xFF) {
+					LOG_CI(VERBOSE, rank, each_slice,
+					       "Nop command, must execute dummy command to get the right color...");
+					/* To avoid stuttering here, just send twice a byte order command with [63: 56] shuffled
+					* and send an identity command and wait for the result to get the color.
+					*/
+					// TODO
+					/* And simply commit an identity command to get the right color: we must
+					* bypass UFI that requires the color. The timeout is needed for the same
+					* reason as above.
+					*/
+					data[each_slice] = CI_IDENTITY;
+				} else {
+					data[each_slice] = CI_EMPTY;
+				}
+			}
+		}
+	}
+	/*if chip is v1.4, Since CI_EMPTY doesn't allow anymore to retrieve the color,
+	 * we send a CI_IDENTITY command to all CIs in order to set the color
+	*/
+	else {
+		for_each_ci (each_slice, nr_cis, ci_mask) {
+			data[each_slice] = CI_IDENTITY;
+		}
+	}
+
+	FF(ci_commit_commands(rank, data));
+	LOGV_PACKET(rank, data, WRITE_DIR);
+
+	timeout = TIMEOUT_COLOR;
+	do {
+		FF(ci_update_commands(rank, data));
+		LOGV_PACKET(rank, data, READ_DIR);
+
+		timeout--;
+
+		result_is_stable = true;
+		for_each_ci (each_slice, nr_cis, ci_mask) {
+			result_is_stable = result_is_stable &&
+					   ((data[each_slice] >> 56) == 0);
+		}
+	} while (timeout && !result_is_stable);
+
+	if (!timeout) {
+		LOG_RANK(WARNING, rank,
+			 "Timeout waiting for result to be correct");
+		status = DPU_ERR_TIMEOUT;
+		goto end;
+	}
+
 	/* Here, we have the color */
-	for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
+	for_each_ci (each_slice, nr_cis, ci_mask) {
 		u8 nb_bits_set = __builtin_popcount(
 			((data[each_slice] & 0x00FF000000000000ULL) >> 48) &
 			0xFF);

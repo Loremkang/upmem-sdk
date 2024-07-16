@@ -151,7 +151,7 @@ update_rank_temperature_sample_time(struct dpu_rank_t *rank)
 					__builtin_popcount(                    \
 						(data[_each_ci] >> 40) &       \
 						0xff);                         \
-				sprintf(packet_str + _each_ci * 11, "%-16s%s", \
+				sprintf(packet_str + _each_ci * 11, "%-10s%s", \
 					temperature_to_string(_temp),          \
 					(_each_ci != (_nr_cis - 1)) ? " " :    \
 									    "");     \

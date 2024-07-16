@@ -47,6 +47,10 @@ uint8_t
 dpu_sysfs_get_backend_id(struct dpu_rank_fs *rank_fs);
 uint8_t
 dpu_sysfs_get_nb_ci(struct dpu_rank_fs *rank_fs);
+struct udev_list_entry *
+get_udev_entry_for_index(struct dpu_rank_fs *rank_fs, uint32_t selected_index);
+uint8_t
+dpu_sysfs_get_ci_mask(struct dpu_rank_fs *rank_fs);
 uint8_t
 dpu_sysfs_get_nb_dpus_per_ci(struct dpu_rank_fs *rank_fs);
 uint32_t

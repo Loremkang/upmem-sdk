@@ -6,8 +6,8 @@ cmake_minimum_required(VERSION 3.13)
 
 find_program(PYGEN ctypesgen)
 find_program(PYFORMAT autopep8)
-find_package(Python 3 REQUIRED)
-file(RELATIVE_PATH PYTHON_RELATIVE_PATH "/usr" ${Python_SITELIB})
+find_package(Python3 REQUIRED)
+file(RELATIVE_PATH PYTHON_RELATIVE_PATH "/usr" ${Python3_SITELIB})
 
 set(C_API_LIB libdpu.so)
 set(C_VPD_LIB libdpuvpd.so)

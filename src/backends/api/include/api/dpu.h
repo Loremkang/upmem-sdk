@@ -13,10 +13,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// IWYU pragma: begin_exports
 #include <dpu_checkpoint.h>
 #include <dpu_error.h>
 #include <dpu_types.h>
 #include <dpu_macro_utils.h>
+// IWYU pragma: end_exports
 
 /**
  * @mainpage
@@ -209,11 +211,11 @@ dpu_get_nr_dpus(struct dpu_set_t dpu_set, uint32_t *nr_dpus);
 /**
  * @brief Iterator over all DPU ranks of a DPU set.
  * @param set the targeted DPU set
- * @param rank a pointer to a `struct dpu_set_t`, which will store the DPU rank context for the current iteration
+ * @param ... a pointer to a `struct dpu_set_t`, which will store the DPU rank context for the current iteration and an optional
+ * pointer to an integer that will store the rank index for the current iteration
  * @hideinitializer
  */
-#define DPU_RANK_FOREACH(set, rank, ...)                                                                                         \
-    _CONCAT(_DPU_RANK_FOREACH_, _DPU_FOREACH_VARIANT(set, rank, ##__VA_ARGS__))(set, rank, ##__VA_ARGS__)
+#define DPU_RANK_FOREACH(set, ...) _CONCAT(_DPU_RANK_FOREACH_, _DPU_FOREACH_VARIANT(set, ##__VA_ARGS__))(set, ##__VA_ARGS__)
 
 /**
  * @brief Intenal macro for DPU_RANK_FOREACH without rank index.
@@ -237,10 +239,11 @@ dpu_get_nr_dpus(struct dpu_set_t dpu_set, uint32_t *nr_dpus);
 /**
  * @brief Iterator over all DPUs of a DPU set.
  * @param set the targeted DPU set
- * @param dpu a pointer to a `struct dpu_set_t`, which will store the dpu context for the current iteration
+ * @param ... a pointer to a `struct dpu_set_t`, which will store the dpu context for the current iteration, and an optional
+ * pointer to an integer that will store the dpu index for the current iteration
  * @hideinitializer
  */
-#define DPU_FOREACH(set, dpu, ...) _CONCAT(_DPU_FOREACH_, _DPU_FOREACH_VARIANT(set, dpu, ##__VA_ARGS__))(set, dpu, ##__VA_ARGS__)
+#define DPU_FOREACH(set, ...) _CONCAT(_DPU_FOREACH_, _DPU_FOREACH_VARIANT(set, ##__VA_ARGS__))(set, ##__VA_ARGS__)
 
 /**
  * @brief Intenal macro for DPU_RANK_FOREACH without rank index.

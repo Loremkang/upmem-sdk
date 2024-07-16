@@ -15,6 +15,8 @@
 
 #include <stdint.h>
 
+#include <dpu_characteristics.h>
+
 #ifndef NR_THREADS
 #ifdef DPU_NR_THREADS
 #define NR_THREADS DPU_NR_THREADS

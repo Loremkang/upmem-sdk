@@ -148,7 +148,7 @@ determine_backend_type_from_complete_profile(dpu_properties_t properties, dpu_ty
 }
 
 __API_SYMBOL__ dpu_error_t
-dpu_get_profile_description(const char *profile, dpu_description_t *description)
+dpu_get_profile_description(const char *profile, dpu_description_t *description, dpu_rank_id_t rank_id)
 {
     dpu_description_t dpu_description;
     dpu_error_t status;
@@ -159,6 +159,10 @@ dpu_get_profile_description(const char *profile, dpu_description_t *description)
         status = DPU_ERR_SYSTEM;
         goto end;
     }
+
+    *dpu_description = (struct _dpu_description_t) { 0 };
+
+    dpu_description->rank_handler_allocator_id = rank_id;
 
     properties = dpu_properties_load_from_profile(profile);
     if (properties == DPU_PROPERTIES_INVALID) {

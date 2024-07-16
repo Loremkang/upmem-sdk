@@ -28,6 +28,10 @@ get_current_time()
 static void
 print(struct verbose_control *vcs, const char *log_type, const char *__restrict __format, va_list __arg, const char *color)
 {
+    if (__format == NULL) {
+        return;
+    }
+
     FILE *out = vcs->output_file;
     bool color_enable = vcs->color_enable && color != NULL;
     char time_string[256];

@@ -223,9 +223,9 @@ __API_SYMBOL__ dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu,
 
 	dpu_error_t status;
 	uint8_t nr_of_threads_per_dpu = rank->description->hw.dpu.nr_of_threads;
-	uint32_t bkp_fault;
-	uint32_t dma_fault;
-	uint32_t mem_fault;
+	bool bkp_fault;
+	bool dma_fault;
+	bool mem_fault;
 	dpu_thread_t bkp_fault_thread_index;
 	dpu_thread_t dma_fault_thread_index;
 	dpu_thread_t mem_fault_thread_index;
@@ -294,7 +294,7 @@ __API_SYMBOL__ dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu,
 	// 3.3 Clear fault
 	FF(ufi_clear_fault_dpu(rank, mask));
 
-	if ((bkp_fault & mask_one) != 0) {
+	if (bkp_fault) {
 		iram_addr_t current_pc;
 		iram_addr_t previous_pc;
 
@@ -322,14 +322,14 @@ __API_SYMBOL__ dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu,
 						       bkp_fault_thread_index));
 		}
 	}
-	if ((dma_fault & mask_one) != 0) {
+	if (dma_fault) {
 		remember_fault = true;
 		context->dma_fault = true;
 		context->dma_fault_thread_index = dma_fault_thread_index;
 		FF(decrement_thread_pc(dpu, dma_fault_thread_index,
 				       context->pcs + dma_fault_thread_index));
 	}
-	if ((mem_fault & mask_one) != 0) {
+	if (mem_fault) {
 		remember_fault = true;
 		context->mem_fault = true;
 		context->mem_fault_thread_index = mem_fault_thread_index;
@@ -355,22 +355,29 @@ __API_SYMBOL__ dpu_error_t ci_debug_init_dpu(struct dpu_t *dpu,
 					 &mem_thread)) {
 			// update context
 			context->dma_fault = context->dma_fault || dma_f;
-			if ((dma_fault & mask_one) == 0) {
+			if (!dma_fault) {
 				context->dma_fault_thread_index = dma_thread;
 			}
 			context->mem_fault = context->mem_fault || mem_f;
-			if ((mem_fault & mask_one) == 0) {
+			if (!mem_fault) {
 				context->mem_fault_thread_index = mem_thread;
 			}
 		}
 
 		if (remember_fault) {
+			if (!context->dma_fault) {
+				context->dma_fault_thread_index = -1;
+			}
+			if (!context->mem_fault) {
+				context->mem_fault_thread_index = -1;
+			}
+
 			// here write to memory, read out of storage
 			storage = encode_error_storage(
 				context->dma_fault,
 				context->dma_fault_thread_index,
 				context->mem_fault,
-				context->dma_fault_thread_index);
+				context->mem_fault_thread_index);
 
 			FF(ci_copy_to_wrams_dpu(dpu,
 						dpu_error_storage.address /
@@ -449,9 +456,9 @@ __API_SYMBOL__ dpu_error_t ci_debug_step_dpu(struct dpu_t *dpu,
 
 	dpu_error_t status;
 	uint8_t nr_of_threads_per_dpu = rank->description->hw.dpu.nr_of_threads;
-	uint32_t poison_fault;
-	uint32_t dma_fault;
-	uint32_t mem_fault;
+	bool poison_fault;
+	bool dma_fault;
+	bool mem_fault;
 	uint32_t nr_of_waiting_threads;
 	uint32_t step_run_state;
 	uint32_t step_fault_state;
@@ -510,16 +517,16 @@ __API_SYMBOL__ dpu_error_t ci_debug_step_dpu(struct dpu_t *dpu,
 
 	// 6. Read & clear faults
 	FF(ufi_read_poison_fault(rank, mask, result_array));
-	poison_fault = result_array[slice_id];
+	poison_fault = (result_array[slice_id] & mask_one) != 0;
 	FF(ufi_clear_fault_poison(rank, mask));
 
 	// Interception Fault Clear
 	FF(ufi_read_bkp_fault(rank, mask, NULL));
 	FF(ufi_clear_fault_bkp(rank, mask));
 	FF(ufi_read_and_clear_dma_fault(rank, mask, result_array));
-	dma_fault = result_array[slice_id];
+	dma_fault = (result_array[slice_id] & mask_one) != 0;
 	FF(ufi_read_and_clear_mem_fault(rank, mask, result_array));
-	mem_fault = result_array[slice_id];
+	mem_fault = (result_array[slice_id] & mask_one) != 0;
 
 	// 7. Resetting scheduling structure
 	nr_of_waiting_threads = (uint32_t)(context->nr_of_running_threads - 1);
@@ -540,7 +547,7 @@ __API_SYMBOL__ dpu_error_t ci_debug_step_dpu(struct dpu_t *dpu,
 	if ((context->nr_of_running_threads - nr_of_waiting_threads) == 1) {
 		// Only one more thread running (the one we stepped on). It may have provoked a fault (if 0 or 2 more threads, the thread
 		// has executed a stop or a boot/resume and no fault can happen).
-		if ((poison_fault & mask_one) == 0) {
+		if (!poison_fault) {
 			// If poison_fault has been cleared, the stepped instruction was a bkp.
 			context->bkp_fault = true;
 			context->bkp_fault_thread_index = thread;
@@ -552,13 +559,13 @@ __API_SYMBOL__ dpu_error_t ci_debug_step_dpu(struct dpu_t *dpu,
 				context->pcs[context->bkp_fault_thread_index],
 				&(context->bkp_fault_id)));
 		}
-		if ((dma_fault & mask_one) != 0) {
+		if (dma_fault) {
 			context->dma_fault = true;
 			context->dma_fault_thread_index = thread;
 			FF(decrement_thread_pc(dpu, thread,
 					       context->pcs + thread));
 		}
-		if ((mem_fault & mask_one) != 0) {
+		if (mem_fault) {
 			context->mem_fault = true;
 			context->mem_fault_thread_index = thread;
 			FF(decrement_thread_pc(dpu, thread,
@@ -887,9 +894,13 @@ ci_debug_restore_context_dpu(struct dpu_t *dpu, struct dpu_context_t *context)
 
 __API_SYMBOL__ dpu_error_t ci_debug_save_context_rank(struct dpu_rank_t *rank)
 {
-	dpu_error_t status;
+	dpu_error_t status = DPU_OK;
+	uint8_t ci_mask = rank->description->hw.topology.ci_mask;
 
-	FF(ci_get_color(rank, (uint32_t *)&rank->debug.debug_result));
+	LOG_RANK(DEBUG, rank, "");
+
+	/*keep in rank->debug.debug_result the color*/
+	FF(ci_get_color(rank, (uint32_t *)&rank->debug.debug_result, ci_mask));
 
 	memcpy(&rank->debug.debug_color, &rank->runtime.control_interface.color,
 	       sizeof(dpu_ci_bitfield_t));
@@ -915,6 +926,8 @@ __API_SYMBOL__ dpu_error_t ci_debug_restore_context_rank(struct dpu_rank_t *rank
 	bool result_is_stable;
 	dpu_slice_id_t each_slice;
 
+	/*Need to retrieve CI mask to send ufi command/check results only for working CI*/
+	uint8_t ci_enable_mask = rank->description->hw.topology.ci_mask;
 	/* 1/ Sets the color as it was before the debugger intervention */
 
 	/* Read the control interface as long as [63: 56] != 0: this loop is necessary in case of FPGA where
@@ -931,7 +944,7 @@ __API_SYMBOL__ dpu_error_t ci_debug_restore_context_rank(struct dpu_rank_t *rank
 		timeout--;
 
 		result_is_stable = true;
-		for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
+		for_each_ci (each_slice, nr_cis, ci_enable_mask) {
 			result_is_stable =
 				result_is_stable &&
 				(((data[each_slice] >> 56) & 0xFF) == 0);
@@ -945,7 +958,7 @@ __API_SYMBOL__ dpu_error_t ci_debug_restore_context_rank(struct dpu_rank_t *rank
 	}
 
 	/* 2/ Restore the last target */
-	for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
+	for_each_ci (each_slice, nr_cis, ci_enable_mask) {
 		uint8_t mask = CI_MASK_ONE(each_slice);
 		if (rank->debug.debug_slice_info[each_slice].slice_target.type !=
 		    DPU_SLICE_TARGET_NONE) {
@@ -982,7 +995,7 @@ __API_SYMBOL__ dpu_error_t ci_debug_restore_context_rank(struct dpu_rank_t *rank
 	 *  Note that replaying a write structure has no effect; structure register value is only
 	 *  used when a send frame is sent, on its own, it does nothing.
 	 */
-	for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
+	for_each_ci (each_slice, nr_cis, ci_enable_mask) {
 		uint8_t ci_mask = CI_MASK_ONE(each_slice);
 		if ((rank->runtime.control_interface.color & ci_mask) ==
 		    (rank->debug.debug_color & ci_mask)) {
@@ -996,7 +1009,7 @@ __API_SYMBOL__ dpu_error_t ci_debug_restore_context_rank(struct dpu_rank_t *rank
 	}
 
 	/* 3/ Restore the structure value */
-	for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
+	for_each_ci (each_slice, nr_cis, ci_enable_mask) {
 		data[each_slice] =
 			rank->debug.debug_slice_info[each_slice].structure_value;
 		/* Update debugger last structure value written */
@@ -1014,7 +1027,7 @@ __API_SYMBOL__ dpu_error_t ci_debug_restore_context_rank(struct dpu_rank_t *rank
 		timeout--;
 
 		result_is_stable = true;
-		for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
+		for_each_ci (each_slice, nr_cis, ci_enable_mask) {
 			uint8_t cmd_type = (uint8_t)(((data[each_slice] &
 						       0xFF00000000000000ULL) >>
 						      56) &
@@ -1037,13 +1050,19 @@ __API_SYMBOL__ dpu_error_t ci_debug_restore_context_rank(struct dpu_rank_t *rank
 	/* The above command toggled the color... */
 	rank->runtime.control_interface.color ^= (1UL << nr_cis) - 1;
 
-	for (each_slice = 0; each_slice < nr_cis; ++each_slice) {
+	for_each_ci (each_slice, nr_cis, ci_enable_mask) {
 		/* 4/ Restore the result expected by the host application */
 		data[each_slice] = 0xFF00000000000000ULL |
 				   rank->debug.debug_result[each_slice];
 	}
 
 	FF(ci_commit_commands(rank, data));
+
+	/* Workarround for V1.4: ci_get_color is necessary to resynchronize the color*/
+	if (is_chip_v1_4(rank)) {
+		FF(ci_get_color(rank, (uint32_t *)&rank->debug.debug_result,
+				ci_enable_mask));
+	}
 
 end:
 	return status;

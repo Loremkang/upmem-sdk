@@ -28,6 +28,7 @@ typedef enum _dpu_chip_id_e {
     vD_fpga8 = 6,
     vD_asic4 = 7,
     vD_fpga4 = 8,
+    vD_fun_v1_4 = 66,
     vD_asic1_v1_4 = 67,
     vD_asic8_v1_4 = 68,
     vD_fpga1_v1_4 = 69,
@@ -39,7 +40,7 @@ typedef enum _dpu_chip_id_e {
 /**
  * @brief The next DPU chip index to be used.
  */
-#define NEXT_DPU_CHIP_IDX 15
+#define NEXT_DPU_CHIP_IDX 16
 
 /**
  * @brief Get the DPU chip index for a given DPU chip ID.
@@ -68,18 +69,20 @@ chip_id_to_idx(dpu_chip_id_e chip_id)
             return 7;
         case vD_fpga4:
             return 8;
-        case vD_asic1_v1_4:
+        case vD_fun_v1_4:
             return 9;
-        case vD_asic8_v1_4:
+        case vD_asic1_v1_4:
             return 10;
-        case vD_fpga1_v1_4:
+        case vD_asic8_v1_4:
             return 11;
-        case vD_fpga8_v1_4:
+        case vD_fpga1_v1_4:
             return 12;
-        case vD_asic4_v1_4:
+        case vD_fpga8_v1_4:
             return 13;
-        case vD_fpga4_v1_4:
+        case vD_asic4_v1_4:
             return 14;
+        case vD_fpga4_v1_4:
+            return 15;
         default:
             return NEXT_DPU_CHIP_IDX;
     }

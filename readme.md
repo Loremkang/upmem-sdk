@@ -1,3 +1,3 @@
 # A mirror of https://sdk.upmem.com
 
-Version 2023.2.0
+Version 2024.1.0

@@ -18,6 +18,8 @@ typedef struct _elf_fd {
     size_t phnum;
     unsigned int symtab_index;
     unsigned int strtab_index;
+    unsigned int dpu_attributes_index;
+    char *chip_version;
     /* Preload the symbol maps, so that we do not need to browse all the symbols each time. The table is indexed
      * by section number. */
     dpu_elf_symbols_t *symbol_maps;

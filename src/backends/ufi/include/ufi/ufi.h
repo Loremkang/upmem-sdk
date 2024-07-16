@@ -11,13 +11,21 @@
 #define __UFI_H__
 
 #include <ufi/ufi_ci_types.h>
+#include <ufi/ufi_ci.h>
 #include <dpu_types.h>
 
 #define ALL_CIS ((1u << DPU_MAX_NR_CIS) - 1u)
-#define CI_MASK_ONE(ci) (1u << (ci))
 
 #define DPU_ENABLED_GROUP 0
 #define DPU_DISABLED_GROUP 1
+
+u32 ufi_exec_write_structure(struct dpu_rank_t *rank, u8 ci_mask,
+			     u64 structure);
+
+u32 ufi_exec_void_frame(struct dpu_rank_t *rank, u8 ci_mask, u64 structure,
+			u64 frame);
+u32 ufi_exec_8bit_frame(struct dpu_rank_t *rank, u8 ci_mask, u64 structure,
+			u64 frame, u8 *results);
 
 u32 ufi_byte_order(struct dpu_rank_t *rank, u8 ci_mask, u64 *results);
 u32 ufi_soft_reset(struct dpu_rank_t *rank, u8 ci_mask, u8 clock_division,
@@ -28,7 +36,7 @@ u32 ufi_identity(struct dpu_rank_t *rank, u8 ci_mask, u32 *results);
 u32 ufi_thermal_config(struct dpu_rank_t *rank, u8 ci_mask,
 		       enum dpu_temperature threshold);
 
-u32 ufi_select_cis(struct dpu_rank_t *rank, u8 *ci_mask);
+u32 ufi_create_ci_mask(struct dpu_rank_t *rank, u8 *valid_ci);
 u32 ufi_select_all(struct dpu_rank_t *rank, u8 *ci_mask);
 u32 ufi_select_all_uncached(struct dpu_rank_t *rank, u8 *ci_mask);
 u32 ufi_select_all_even_disabled(struct dpu_rank_t *rank, u8 *ci_mask);

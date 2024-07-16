@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <attributes.h>
+#include <dpu_characteristics.h>
 
 /**
  * @file mram.h

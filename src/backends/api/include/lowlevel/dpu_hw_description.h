@@ -45,6 +45,8 @@ struct dpu_hw_description_t {
         uint8_t nr_of_control_interfaces;
         /** The number of DPUs per Control Interface. */
         uint8_t nr_of_dpus_per_control_interface;
+        /** The bitfield that gives which CIs are functional on a DPU rank */
+        uint8_t ci_mask;
     } topology;
 
     /** Memory information. */
@@ -55,6 +57,8 @@ struct dpu_hw_description_t {
         wram_size_t wram_size;
         /** IRAM size in instructions. */
         iram_size_t iram_size;
+        /** Number of bits for LSB for CI_PC read */
+        uint8_t ci_pc_lsb_nr_phys_bits;
     } memories;
 
     /** DPU information. */

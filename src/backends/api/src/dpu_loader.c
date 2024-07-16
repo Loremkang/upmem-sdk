@@ -18,6 +18,7 @@
 #include <dpu_api_log.h>
 
 #include <gelf.h>
+#include <dpu_chip_id.h>
 #include <dpu_elf_internals.h>
 #include <dpu_attributes.h>
 #include <dpu_rank.h>
@@ -48,6 +49,8 @@ struct dpu_load_memory_functions_t {
     mem_load_function_t load_regs;
 };
 
+static dpu_error_t
+validate_chip_version(struct dpu_rank_t *rank, char *chip_version);
 static dpu_error_t
 extract_and_convert_memory_information(GElf_Phdr *phdr,
     dpu_loader_context_t context,
@@ -128,6 +131,10 @@ dpu_elf_load(dpu_elf_file_t file, dpu_loader_context_t context)
 
     switch (context->env.target) {
         case DPU_LOADER_TARGET_RANK:
+            if ((status = validate_chip_version(context->env.rank, info->chip_version)) != DPU_OK) {
+                goto end;
+            }
+
             load_functions.load_iram = load_rank_iram;
             load_functions.load_wram = load_rank_wram;
             load_functions.load_mram = load_rank_mram;
@@ -148,6 +155,10 @@ dpu_elf_load(dpu_elf_file_t file, dpu_loader_context_t context)
             }
             break;
         case DPU_LOADER_TARGET_DPU:
+            if ((status = validate_chip_version(context->env.dpu->rank, info->chip_version)) != DPU_OK) {
+                goto end;
+            }
+
             load_functions.load_iram = load_dpu_iram;
             load_functions.load_wram = load_dpu_wram;
             load_functions.load_mram = load_dpu_mram;
@@ -207,6 +218,44 @@ dpu_elf_load(dpu_elf_file_t file, dpu_loader_context_t context)
     }
 
 end:
+    return status;
+}
+
+static dpu_error_t
+validate_chip_version(struct dpu_rank_t *rank, char *chip_version_elf)
+{
+    dpu_error_t status = DPU_OK;
+    dpu_chip_id_e chip_id = rank->description->hw.signature.chip_id;
+
+    char *chip_version_hw = NULL;
+    switch (chip_id) {
+        case vD ... vD_fpga4:
+            chip_version_hw = "v1A";
+            break;
+        case vD_fun_v1_4 ... vD_fpga4_v1_4:
+            chip_version_hw = "v1B";
+            break;
+        default:
+            LOG_RANK(WARNING, rank, "Unknown chip id: 0x%x", chip_id);
+            return DPU_ERR_INTERNAL;
+    }
+
+    const bool simulator = (chip_id & 0xfU) == 0x4U;
+    const char *platform = simulator ? "simulator" : "hardware";
+
+    if (strncmp(chip_version_elf, chip_version_hw, strlen(chip_version_hw)) != 0) {
+        LOG_RANK(WARNING,
+            rank,
+            "You're running on the %s %s, but current DPU binary has been compiled for %s.",
+            chip_version_hw,
+            platform,
+            chip_version_elf);
+        if (simulator) {
+            LOG_RANK(WARNING, rank, "Restart the simulation with UPMEM_PROFILE=\"chipId=0x%x\"", (chip_id == 0x2) ? 0x42 : 0x2);
+        }
+        status = DPU_ERR_INTERNAL;
+    }
+
     return status;
 }
 
